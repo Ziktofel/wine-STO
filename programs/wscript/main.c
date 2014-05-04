@@ -229,7 +229,7 @@ static BOOL get_engine_clsid(const WCHAR *ext, CLSID *clsid)
     return SUCCEEDED(hres);
 }
 
-static HRESULT create_engine(CLSID *clsid, IActiveScript **script_ret,
+static BOOL create_engine(CLSID *clsid, IActiveScript **script_ret,
         IActiveScriptParse **parser)
 {
     IActiveScript *script;
@@ -256,7 +256,7 @@ static HRESULT create_engine(CLSID *clsid, IActiveScript **script_ret,
     return TRUE;
 }
 
-static HRESULT init_engine(IActiveScript *script, IActiveScriptParse *parser)
+static BOOL init_engine(IActiveScript *script, IActiveScriptParse *parser)
 {
     HRESULT hres;
 
@@ -339,6 +339,7 @@ static void run_script(const WCHAR *filename, IActiveScript *script, IActiveScri
 
 static BOOL set_host_properties(const WCHAR *prop)
 {
+    static const WCHAR nologoW[] = {'n','o','l','o','g','o',0};
     static const WCHAR iactive[] = {'i',0};
     static const WCHAR batch[] = {'b',0};
 
@@ -354,8 +355,13 @@ static BOOL set_host_properties(const WCHAR *prop)
         wshInteractive = VARIANT_TRUE;
     else if(strcmpiW(prop, batch) == 0)
         wshInteractive = VARIANT_FALSE;
+    else if(strcmpiW(prop, nologoW) == 0)
+        WINE_FIXME("ignored %s switch\n", debugstr_w(nologoW));
     else
+    {
+        WINE_FIXME("unsupported switch %s\n", debugstr_w(prop));
         return FALSE;
+    }
     return TRUE;
 }
 

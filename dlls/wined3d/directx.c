@@ -31,6 +31,7 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(d3d);
 WINE_DECLARE_DEBUG_CHANNEL(d3d_perf);
+WINE_DECLARE_DEBUG_CHANNEL(winediag);
 
 #define WINE_DEFAULT_VIDMEM (64 * 1024 * 1024)
 #define DEFAULT_REFRESH_RATE 0
@@ -93,6 +94,7 @@ static const struct wined3d_extension_map gl_extension_map[] =
     {"GL_APPLE_ycbcr_422",                  APPLE_YCBCR_422               },
 
     /* ARB */
+    {"GL_ARB_blend_func_extended",          ARB_BLEND_FUNC_EXTENDED       },
     {"GL_ARB_color_buffer_float",           ARB_COLOR_BUFFER_FLOAT        },
     {"GL_ARB_debug_output",                 ARB_DEBUG_OUTPUT              },
     {"GL_ARB_depth_buffer_float",           ARB_DEPTH_BUFFER_FLOAT        },
@@ -138,6 +140,7 @@ static const struct wined3d_extension_map gl_extension_map[] =
     {"GL_ARB_texture_non_power_of_two",     ARB_TEXTURE_NON_POWER_OF_TWO  },
     {"GL_ARB_texture_rectangle",            ARB_TEXTURE_RECTANGLE         },
     {"GL_ARB_texture_rg",                   ARB_TEXTURE_RG                },
+    {"GL_ARB_timer_query",                  ARB_TIMER_QUERY               },
     {"GL_ARB_vertex_array_bgra",            ARB_VERTEX_ARRAY_BGRA         },
     {"GL_ARB_vertex_blend",                 ARB_VERTEX_BLEND              },
     {"GL_ARB_vertex_buffer_object",         ARB_VERTEX_BUFFER_OBJECT      },
@@ -436,7 +439,7 @@ static BOOL test_arb_vs_offset_limit(const struct wined3d_gl_info *gl_info)
 {
     GLuint prog;
     BOOL ret = FALSE;
-    const char *testcode =
+    static const char testcode[] =
         "!!ARBvp1.0\n"
         "PARAM C[66] = { program.env[0..65] };\n"
         "ADDRESS A0;"
@@ -650,7 +653,7 @@ static BOOL match_broken_nv_clip(const struct wined3d_gl_info *gl_info, const ch
     GLuint prog;
     BOOL ret = FALSE;
     GLint pos;
-    const char *testcode =
+    static const char testcode[] =
         "!!ARBvp1.0\n"
         "OPTION NV_vertex_program2;\n"
         "MOV result.clip[0], 0.0;\n"
@@ -787,7 +790,7 @@ static BOOL match_broken_arb_fog(const struct wined3d_gl_info *gl_info, const ch
     float color[4] = {0.0f, 1.0f, 0.0f, 0.0f};
     GLuint prog;
     GLint err_pos;
-    static const char *program_code =
+    static const char program_code[] =
         "!!ARBfp1.0\n"
         "OPTION ARB_fog_linear;\n"
         "MOV result.color, {1.0, 0.0, 0.0, 0.0};\n"
@@ -1261,9 +1264,14 @@ static const struct gpu_description gpu_description_table[] =
     {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_GTX670,     "NVIDIA GeForce GTX 670",           DRIVER_NVIDIA_GEFORCE6,  2048},
     {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_GTX670MX,   "NVIDIA GeForce GTX 670MX",         DRIVER_NVIDIA_GEFORCE6,  3072},
     {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_GTX680,     "NVIDIA GeForce GTX 680",           DRIVER_NVIDIA_GEFORCE6,  2048},
+    {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_GTX750,     "NVIDIA GeForce GTX 750",           DRIVER_NVIDIA_GEFORCE6,  1024},
+    {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_GTX750TI,   "NVIDIA GeForce GTX 750 Ti",        DRIVER_NVIDIA_GEFORCE6,  2048},
+    {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_GTX760,     "NVIDIA Geforce GTX 760",           DRIVER_NVIDIA_GEFORCE6,  2048},
     {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_GTX765M,    "NVIDIA GeForce GTX 765M",          DRIVER_NVIDIA_GEFORCE6,  2048},
     {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_GTX770M,    "NVIDIA GeForce GTX 770M",          DRIVER_NVIDIA_GEFORCE6,  3072},
     {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_GTX770,     "NVIDIA GeForce GTX 770",           DRIVER_NVIDIA_GEFORCE6,  2048},
+    {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_GTX780,     "NVIDIA GeForce GTX 780",           DRIVER_NVIDIA_GEFORCE6,  3072},
+    {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_GTX780TI,   "NVIDIA GeForce GTX 780 Ti",        DRIVER_NVIDIA_GEFORCE6,  3072},
 
     /* AMD cards */
     {HW_VENDOR_AMD,        CARD_AMD_RAGE_128PRO,           "ATI Rage Fury",                    DRIVER_AMD_RAGE_128PRO,  16  },
@@ -1361,33 +1369,56 @@ static const struct driver_version_information *get_driver_version_info(enum win
     return NULL;
 }
 
+static const struct gpu_description *get_gpu_description(enum wined3d_pci_vendor vendor,
+        enum wined3d_pci_device device)
+{
+    unsigned int i;
+
+    for (i = 0; i < (sizeof(gpu_description_table) / sizeof(*gpu_description_table)); ++i)
+    {
+        if (vendor == gpu_description_table[i].vendor && device == gpu_description_table[i].card)
+            return &gpu_description_table[i];
+    }
+
+    return NULL;
+}
+
 static void init_driver_info(struct wined3d_driver_info *driver_info,
         enum wined3d_pci_vendor vendor, enum wined3d_pci_device device)
 {
     OSVERSIONINFOW os_version;
     WORD driver_os_version;
-    unsigned int i;
-    enum wined3d_display_driver driver = DRIVER_UNKNOWN;
+    enum wined3d_display_driver driver;
     enum wined3d_driver_model driver_model;
     const struct driver_version_information *version_info;
+    const struct gpu_description *gpu_desc;
 
-    if (wined3d_settings.pci_vendor_id != PCI_VENDOR_NONE)
+    if (driver_info->vendor != PCI_VENDOR_NONE || driver_info->device != PCI_DEVICE_NONE)
     {
-        TRACE("Overriding PCI vendor ID with 0x%04x.\n", wined3d_settings.pci_vendor_id);
-        vendor = wined3d_settings.pci_vendor_id;
+        static unsigned int once;
+
+        TRACE("GPU override %04x:%04x.\n", wined3d_settings.pci_vendor_id, wined3d_settings.pci_device_id);
+
+        driver_info->vendor = wined3d_settings.pci_vendor_id;
+        if (driver_info->vendor == PCI_VENDOR_NONE)
+            driver_info->vendor = vendor;
+
+        driver_info->device = wined3d_settings.pci_device_id;
+        if (driver_info->device == PCI_DEVICE_NONE)
+            driver_info->device = device;
+
+        if (get_gpu_description(driver_info->vendor, driver_info->device))
+        {
+            vendor = driver_info->vendor;
+            device = driver_info->device;
+        }
+        else if (!once++)
+            ERR_(winediag)("Invalid GPU override %04x:%04x specified, ignoring.\n",
+                    driver_info->vendor, driver_info->device);
     }
+
     driver_info->vendor = vendor;
-
-    if (wined3d_settings.pci_device_id != PCI_DEVICE_NONE)
-    {
-        TRACE("Overriding PCI device ID with 0x%04x.\n", wined3d_settings.pci_device_id);
-        device = wined3d_settings.pci_device_id;
-    }
     driver_info->device = device;
-
-    /* Set a default amount of video memory (64 MB). In general this code isn't used unless the user
-     * overrides the pci ids to a card which is not in our database. */
-    driver_info->vidmem = WINE_DEFAULT_VIDMEM;
 
     memset(&os_version, 0, sizeof(os_version));
     os_version.dwOSVersionInfoSize = sizeof(os_version);
@@ -1447,19 +1478,18 @@ static void init_driver_info(struct wined3d_driver_info *driver_info,
         }
     }
 
-    /* When we reach this stage we always have a vendor or device id (it can be a default one).
-     * This means that unless the ids are overridden, we will always find a GPU description. */
-    for (i = 0; i < (sizeof(gpu_description_table) / sizeof(gpu_description_table[0])); i++)
+    if ((gpu_desc = get_gpu_description(driver_info->vendor, driver_info->device)))
     {
-        if (vendor == gpu_description_table[i].vendor && device == gpu_description_table[i].card)
-        {
-            TRACE("Found card %04x:%04x in driver DB.\n", vendor, device);
-
-            driver_info->description = gpu_description_table[i].description;
-            driver_info->vidmem = gpu_description_table[i].vidmem * 1024*1024;
-            driver = gpu_description_table[i].driver;
-            break;
-        }
+        driver_info->description = gpu_desc->description;
+        driver_info->vidmem = gpu_desc->vidmem * 1024 * 1024;
+        driver = gpu_desc->driver;
+    }
+    else
+    {
+        ERR("Card %04x:%04x not found in driver DB.\n", vendor, device);
+        driver_info->description = "Direct3D HAL";
+        driver_info->vidmem = WINE_DEFAULT_VIDMEM;
+        driver = DRIVER_UNKNOWN;
     }
 
     if (wined3d_settings.emulated_textureram)
@@ -1481,8 +1511,8 @@ static void init_driver_info(struct wined3d_driver_info *driver_info,
      * - the gpu is not in our database (can happen when the user overrides the vendor_id / device_id)
      *   This could be an indication that our database is not up to date, so this should be fixed.
      */
-    version_info = get_driver_version_info(driver, driver_model);
-    if (version_info)
+    if ((version_info = get_driver_version_info(driver, driver_model))
+            || (version_info = get_driver_version_info(driver, DRIVER_MODEL_NT5X)))
     {
         driver_info->name = version_info->driver_name;
         driver_info->version_high = MAKEDWORD_VERSION(driver_os_version, version_info->version);
@@ -1490,23 +1520,11 @@ static void init_driver_info(struct wined3d_driver_info *driver_info,
     }
     else
     {
-        version_info = get_driver_version_info(driver, DRIVER_MODEL_NT5X);
-        if (version_info)
-        {
-            driver_info->name = version_info->driver_name;
-            driver_info->version_high = MAKEDWORD_VERSION(driver_os_version, version_info->version);
-            driver_info->version_low = MAKEDWORD_VERSION(version_info->subversion, version_info->build);
-        }
-        else
-        {
-            driver_info->description = "Direct3D HAL";
-            driver_info->name = "Display";
-            driver_info->version_high = MAKEDWORD_VERSION(driver_os_version, 15);
-            driver_info->version_low = MAKEDWORD_VERSION(8, 6); /* Nvidia RIVA TNT, arbitrary */
-
-            FIXME("Unable to find a driver/device info for vendor_id=%#x device_id=%#x for driver_model=%d\n",
-                    vendor, device, driver_model);
-        }
+        ERR("No driver version info found for device %04x:%04x, driver model %#x.\n",
+                vendor, device, driver_model);
+        driver_info->name = "Display";
+        driver_info->version_high = MAKEDWORD_VERSION(driver_os_version, 15);
+        driver_info->version_low = MAKEDWORD_VERSION(8, 6); /* Nvidia RIVA TNT, arbitrary */
     }
 
     TRACE("Reporting (fake) driver version 0x%08x-0x%08x.\n",
@@ -1670,9 +1688,14 @@ static enum wined3d_pci_device select_card_nvidia_binary(const struct wined3d_gl
         }
         cards[] =
         {
+            {"GTX 780 Ti",  CARD_NVIDIA_GEFORCE_GTX780TI},  /* Geforce 700 - highend */
+            {"GTX 780",     CARD_NVIDIA_GEFORCE_GTX780},    /* Geforce 700 - highend */
             {"GTX 770M",    CARD_NVIDIA_GEFORCE_GTX770M},   /* Geforce 700 - midend high mobile */
             {"GTX 770",     CARD_NVIDIA_GEFORCE_GTX770},    /* Geforce 700 - highend */
             {"GTX 765M",    CARD_NVIDIA_GEFORCE_GTX765M},   /* Geforce 700 - midend high mobile */
+            {"GTX 760",     CARD_NVIDIA_GEFORCE_GTX760},    /* Geforce 700 - midend high  */
+            {"GTX 750 Ti",  CARD_NVIDIA_GEFORCE_GTX750TI},  /* Geforce 700 - midend */
+            {"GTX 750",     CARD_NVIDIA_GEFORCE_GTX750},    /* Geforce 700 - midend */
             {"GTX 680",     CARD_NVIDIA_GEFORCE_GTX680},    /* Geforce 600 - highend */
             {"GTX 670MX",   CARD_NVIDIA_GEFORCE_GTX670MX},  /* Geforce 600 - highend */
             {"GTX 670",     CARD_NVIDIA_GEFORCE_GTX670},    /* Geforce 600 - midend high */
@@ -2166,7 +2189,11 @@ static enum wined3d_pci_device select_card_nvidia_mesa(const struct wined3d_gl_i
     }
     cards[] =
     {
+        /* Maxwell */
+        {"NV117",   CARD_NVIDIA_GEFORCE_GTX750},
         /* Kepler */
+        {"NVF1",    CARD_NVIDIA_GEFORCE_GTX780TI},
+        {"NVF0",    CARD_NVIDIA_GEFORCE_GTX780},
         {"NVE6",    CARD_NVIDIA_GEFORCE_GTX770M},
         {"NVE4",    CARD_NVIDIA_GEFORCE_GTX680},
         /* Fermi */
@@ -2958,6 +2985,15 @@ static BOOL wined3d_adapter_init_gl_caps(struct wined3d_adapter *adapter)
         TRACE("Occlusion query counter has %d bits.\n", counter_bits);
         if (!counter_bits)
             gl_info->supported[ARB_OCCLUSION_QUERY] = FALSE;
+    }
+    if (gl_info->supported[ARB_TIMER_QUERY])
+    {
+        GLint counter_bits;
+
+        GL_EXTCALL(glGetQueryivARB(GL_TIMESTAMP, GL_QUERY_COUNTER_BITS_ARB, &counter_bits));
+        TRACE("Timestamp query counter has %d bits.\n", counter_bits);
+        if (!counter_bits)
+            gl_info->supported[ARB_TIMER_QUERY] = FALSE;
     }
     if (!gl_info->supported[ATI_TEXTURE_MIRROR_ONCE] && gl_info->supported[EXT_TEXTURE_MIRROR_CLAMP])
     {
@@ -4006,6 +4042,21 @@ HRESULT CDECL wined3d_check_device_format(const struct wined3d *wined3d, UINT ad
     return WINED3D_OK;
 }
 
+UINT CDECL wined3d_calculate_format_pitch(const struct wined3d *wined3d, UINT adapter_idx,
+        enum wined3d_format_id format_id, UINT width)
+{
+    const struct wined3d_gl_info *gl_info;
+
+    TRACE("wined3d %p, adapter_idx %u, format_id %s, width %u.\n",
+            wined3d, adapter_idx, debug_d3dformat(format_id), width);
+
+    if (adapter_idx >= wined3d->adapter_count)
+        return ~0u;
+
+    gl_info = &wined3d->adapters[adapter_idx].gl_info;
+    return wined3d_format_calculate_pitch(wined3d_get_format(gl_info, format_id), width);
+}
+
 HRESULT CDECL wined3d_check_device_format_conversion(const struct wined3d *wined3d, UINT adapter_idx,
         enum wined3d_device_type device_type, enum wined3d_format_id src_format, enum wined3d_format_id dst_format)
 {
@@ -4231,6 +4282,8 @@ HRESULT CDECL wined3d_get_device_caps(const struct wined3d *wined3d, UINT adapte
                       WINED3DPCMPCAPS_NEVER        |
                       WINED3DPCMPCAPS_NOTEQUAL;
 
+    /* WINED3DPBLENDCAPS_BOTHINVSRCALPHA and WINED3DPBLENDCAPS_BOTHSRCALPHA
+     * are legacy settings for srcblend only. */
     caps->SrcBlendCaps  =  WINED3DPBLENDCAPS_BOTHINVSRCALPHA |
                            WINED3DPBLENDCAPS_BOTHSRCALPHA    |
                            WINED3DPBLENDCAPS_DESTALPHA       |
@@ -4255,12 +4308,9 @@ HRESULT CDECL wined3d_get_device_caps(const struct wined3d *wined3d, UINT adapte
                            WINED3DPBLENDCAPS_SRCALPHA        |
                            WINED3DPBLENDCAPS_SRCCOLOR        |
                            WINED3DPBLENDCAPS_ZERO;
-    /* NOTE: WINED3DPBLENDCAPS_SRCALPHASAT is not supported as dest blend factor,
-     * according to the glBlendFunc manpage
-     *
-     * WINED3DPBLENDCAPS_BOTHINVSRCALPHA and WINED3DPBLENDCAPS_BOTHSRCALPHA are
-     * legacy settings for srcblend only
-     */
+
+    if (gl_info->supported[ARB_BLEND_FUNC_EXTENDED])
+        caps->DestBlendCaps |= WINED3DPBLENDCAPS_SRCALPHASAT;
 
     if (gl_info->supported[EXT_BLEND_COLOR])
     {
@@ -4538,6 +4588,7 @@ HRESULT CDECL wined3d_get_device_caps(const struct wined3d *wined3d, UINT adapte
 
         caps->MaxVShaderInstructionsExecuted    = 65535; /* VS 3.0 needs at least 65535, some cards even use 2^32-1 */
         caps->MaxVertexShader30InstructionSlots = max(512, adapter->gl_info.limits.arb_vs_instructions);
+        caps->VertexTextureFilterCaps = WINED3DPTFILTERCAPS_MINFPOINT | WINED3DPTFILTERCAPS_MAGFPOINT;
     }
     else if (caps->VertexShaderVersion == 2)
     {

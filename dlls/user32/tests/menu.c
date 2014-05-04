@@ -425,9 +425,7 @@ static void test_menu_locked_by_window(void)
     ok(ret, "DestroyMenu failed with error %d\n", GetLastError());
 
     ret = DrawMenuBar(hwnd);
-    todo_wine {
     ok(ret, "DrawMenuBar failed with error %d\n", GetLastError());
-    }
     ret = IsMenu(GetMenu(hwnd));
     ok(!ret || broken(ret) /* nt4 */, "Menu handle should have been destroyed\n");
 
@@ -2512,6 +2510,11 @@ if (0)
         if (mii.hSubMenu)
         {
             ok(mii.wID == (UINT_PTR)mii.hSubMenu, "id %u: wID should be equal to hSubMenu\n", checked_cmd);
+            if (!GetMenuItemCount(mii.hSubMenu))
+            {
+                ok(mii.fType == checked_type, "id %u: expected fType %04x, got %04x\n", checked_cmd, checked_type, mii.fType);
+                ok(mii.fState == checked_state, "id %u: expected fState %04x, got %04x\n", checked_cmd, checked_state, mii.fState);
+            }
             check_menu_items(mii.hSubMenu, checked_cmd, checked_type, checked_state);
         }
         else
@@ -3326,17 +3329,11 @@ static void test_menu_cancelmode(void)
     /* menu owner is top level window */
     g_hwndtosend = hwnd;
     TrackPopupMenu( menu, TPM_RETURNCMD, 100,100, 0, hwnd, NULL);
-    todo_wine {
-        ok( g_got_enteridle == 0, "received %d WM_ENTERIDLE messages, none expected\n", g_got_enteridle);
-    }
-    ok( g_got_enteridle < 2, "received %d WM_ENTERIDLE messages, should be less than 2\n", g_got_enteridle);
+    ok( g_got_enteridle == 0, "received %d WM_ENTERIDLE messages, none expected\n", g_got_enteridle);
     /* menu owner is child window */
     g_hwndtosend = hwndchild;
     TrackPopupMenu( menu, TPM_RETURNCMD, 100,100, 0, hwndchild, NULL);
-    todo_wine {
-        ok(g_got_enteridle == 0, "received %d WM_ENTERIDLE messages, none expected\n", g_got_enteridle);
-    }
-    ok(g_got_enteridle < 2, "received %d WM_ENTERIDLE messages, should be less than 2\n", g_got_enteridle);
+    ok(g_got_enteridle == 0, "received %d WM_ENTERIDLE messages, none expected\n", g_got_enteridle);
     /* now send the WM_CANCELMODE messages to the WRONG window */
     /* those should fail ( to have any effect) */
     g_hwndtosend = hwnd;
@@ -3356,10 +3353,7 @@ static void test_menu_cancelmode(void)
     ok( ret == 0, "Sending WM_SYSCOMMAND/SC_KEYMENU failed lasterror is %u\n", GetLastError());
     while (PeekMessageA(&msg, 0, 0, 0, PM_REMOVE))
         DispatchMessageA(&msg);
-    todo_wine {
-        ok(g_got_enteridle == 0, "received %d WM_ENTERIDLE messages, none expected\n", g_got_enteridle);
-    }
-    ok(g_got_enteridle < 2, "received %d WM_ENTERIDLE messages, should be less than 2\n", g_got_enteridle);
+    ok(g_got_enteridle == 0, "received %d WM_ENTERIDLE messages, none expected\n", g_got_enteridle);
 
     /* cleanup */
     DestroyMenu( menubar );
@@ -3629,6 +3623,123 @@ static void test_emptypopup(void)
     ok(ret, "DestroyMenu failed with error %d\n", GetLastError());
 }
 
+static void test_AppendMenu(void)
+{
+    MENUITEMINFOA mii;
+    HMENU hmenu, hsubmenu;
+    BOOL ret;
+
+    hmenu = CreateMenu();
+    ok(hmenu != 0, "CreateMenu failed\n");
+    ret = AppendMenuA(hmenu, MF_OWNERDRAW, 201, "item 1");
+    ok(ret, "AppendMenu failed\n");
+    check_menu_items(hmenu, 201, MF_OWNERDRAW, 0);
+    DestroyMenu(hmenu);
+
+    hmenu = CreateMenu();
+    ok(hmenu != 0, "CreateMenu failed\n");
+    ret = AppendMenuA(hmenu, MF_POPUP, 202, "item 1");
+    ok(ret, "AppendMenu failed\n");
+    check_menu_items(hmenu, 202, MF_STRING, 0);
+    DestroyMenu(hmenu);
+
+    hmenu = CreateMenu();
+    ok(hmenu != 0, "CreateMenu failed\n");
+    ret = AppendMenuA(hmenu, MF_OWNERDRAW | MF_POPUP, 203, "item 1");
+    ok(ret, "AppendMenu failed\n");
+    check_menu_items(hmenu, 203, MF_OWNERDRAW, 0);
+    DestroyMenu(hmenu);
+
+    hmenu = CreateMenu();
+    ok(hmenu != 0, "CreateMenu failed\n");
+    hsubmenu = CreateMenu();
+    ok(hsubmenu != 0, "CreateMenu failed\n");
+    ret = AppendMenuA(hmenu, MF_OWNERDRAW, (UINT_PTR)hsubmenu, "item 1");
+    ok(ret, "AppendMenu failed\n");
+    check_menu_items(hmenu, (UINT_PTR)hsubmenu, MF_OWNERDRAW, 0);
+    DestroyMenu(hmenu);
+    DestroyMenu(hsubmenu);
+
+    hmenu = CreateMenu();
+    ok(hmenu != 0, "CreateMenu failed\n");
+    hsubmenu = CreateMenu();
+    ok(hsubmenu != 0, "CreateMenu failed\n");
+    ret = AppendMenuA(hmenu, MF_POPUP, (UINT_PTR)hsubmenu, "item 1");
+    ok(ret, "AppendMenu failed\n");
+    check_menu_items(hmenu, (UINT_PTR)hsubmenu, MF_STRING, 0);
+    DestroyMenu(hmenu);
+    DestroyMenu(hsubmenu);
+
+    hmenu = CreateMenu();
+    ok(hmenu != 0, "CreateMenu failed\n");
+    hsubmenu = CreateMenu();
+    ok(hsubmenu != 0, "CreateMenu failed\n");
+    ret = AppendMenuA(hmenu, MF_OWNERDRAW | MF_POPUP, (UINT_PTR)hsubmenu, "item 1");
+    ok(ret, "AppendMenu failed\n");
+    check_menu_items(hmenu, (UINT_PTR)hsubmenu, MF_OWNERDRAW, 0);
+    DestroyMenu(hmenu);
+    DestroyMenu(hsubmenu);
+
+    hmenu = CreateMenu();
+    ok(hmenu != 0, "CreateMenu failed\n");
+    hsubmenu = CreatePopupMenu();
+    ok(hsubmenu != 0, "CreatePopupMenu failed\n");
+    ret = AppendMenuA(hmenu, MF_OWNERDRAW, (UINT_PTR)hsubmenu, "item 1");
+    ok(ret, "AppendMenu failed\n");
+    check_menu_items(hmenu, (UINT_PTR)hsubmenu, MF_OWNERDRAW, 0);
+    DestroyMenu(hmenu);
+    DestroyMenu(hsubmenu);
+
+    hmenu = CreateMenu();
+    ok(hmenu != 0, "CreateMenu failed\n");
+    hsubmenu = CreatePopupMenu();
+    ok(hsubmenu != 0, "CreatePopupMenu failed\n");
+    ret = AppendMenuA(hmenu, MF_POPUP, (UINT_PTR)hsubmenu, "item 1");
+    ok(ret, "AppendMenu failed\n");
+    check_menu_items(hmenu, (UINT_PTR)hsubmenu, MF_STRING, 0);
+    DestroyMenu(hmenu);
+    DestroyMenu(hsubmenu);
+
+    hmenu = CreateMenu();
+    ok(hmenu != 0, "CreateMenu failed\n");
+    hsubmenu = CreatePopupMenu();
+    ok(hsubmenu != 0, "CreatePopupMenu failed\n");
+    ret = AppendMenuA(hmenu, MF_OWNERDRAW | MF_POPUP, (UINT_PTR)hsubmenu, "item 1");
+    ok(ret, "AppendMenu failed\n");
+    check_menu_items(hmenu, (UINT_PTR)hsubmenu, MF_OWNERDRAW, 0);
+    DestroyMenu(hmenu);
+    DestroyMenu(hsubmenu);
+
+    hmenu = CreateMenu();
+    ok(hmenu != 0, "CreateMenu failed\n");
+    ret = AppendMenuA(hmenu, MF_STRING, 204, "item 1");
+    ok(ret, "AppendMenu failed\n");
+    check_menu_items(hmenu, 204, MF_STRING, 0);
+    ret = ModifyMenuA(hmenu, 0, MF_POPUP | MF_BYPOSITION, 205, "item 2");
+    ok(ret, "ModifyMenu failed\n");
+    check_menu_items(hmenu, 205, MF_STRING, 0);
+    memset(&mii, 0, sizeof(mii));
+    mii.cbSize = sizeof(mii);
+    mii.fMask = MIIM_SUBMENU;
+    mii.hSubMenu = (HMENU)204;
+    ret = InsertMenuItemA(hmenu, 0, TRUE, &mii);
+    ok(!ret, "InsertMenuItem should fail\n");
+    ret = SetMenuItemInfoA(hmenu, 0, TRUE, &mii);
+    ok(!ret, "SetMenuItemInfo should fail\n");
+    mii.fMask = MIIM_ID;
+    mii.wID = 206;
+    ret = InsertMenuItemA(hmenu, 0, TRUE, &mii);
+    ok(ret, "InsertMenuItem failed\n");
+if (0) /* FIXME: uncomment once Wine is fixed */
+    check_menu_items(hmenu, 206, MF_SEPARATOR, MFS_GRAYED);
+    mii.wID = 207;
+    ret = SetMenuItemInfoA(hmenu, 0, TRUE, &mii);
+    ok(ret, "SetMenuItemInfo failed\n");
+if (0) /* FIXME: uncomment once Wine is fixed */
+    check_menu_items(hmenu, 207, MF_SEPARATOR, MFS_GRAYED);
+    DestroyMenu(hmenu);
+}
+
 START_TEST(menu)
 {
     init_function_pointers();
@@ -3666,4 +3777,5 @@ START_TEST(menu)
     test_menu_maxdepth();
     test_menu_circref();
     test_emptypopup();
+    test_AppendMenu();
 }

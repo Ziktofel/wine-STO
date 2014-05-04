@@ -1442,7 +1442,7 @@ then
         if test "$ac_cv_header_lcms2_h" = "yes"
         then
             AC_CHECK_LIB(lcms2, cmsOpenProfileFromFile,
-                [AC_DEFINE(HAVE_LCMS2, 1, [Define if you have the LittleCMS development environment])],[LCMS2_LIBS=""])
+                [AC_DEFINE(HAVE_LCMS2, 1, [Define if you have the LittleCMS development environment])],[LCMS2_LIBS=""],[$LCMS2_LIBS])
         else
             LCMS2_CFLAGS=""
             LCMS2_LIBS=""
@@ -3031,6 +3031,8 @@ WINE_CONFIG_DLL(netapi32,,[implib])
 WINE_CONFIG_TEST(dlls/netapi32/tests)
 WINE_CONFIG_DLL(netcfgx,,[clean])
 WINE_CONFIG_TEST(dlls/netcfgx/tests)
+WINE_CONFIG_DLL(netprofm,,[clean])
+WINE_CONFIG_TEST(dlls/netprofm/tests)
 WINE_CONFIG_DLL(newdev,,[implib])
 WINE_CONFIG_DLL(normaliz,,[implib])
 WINE_CONFIG_DLL(npmshtml)
@@ -3342,6 +3344,7 @@ WINE_CONFIG_PROGRAM(rundll.exe16,enable_win16,[install])
 WINE_CONFIG_PROGRAM(rundll32,,[install])
 WINE_CONFIG_PROGRAM(sc,,[install])
 WINE_CONFIG_PROGRAM(schtasks,,[install])
+WINE_CONFIG_PROGRAM(sdbinst,,[install])
 WINE_CONFIG_PROGRAM(secedit,,[install])
 WINE_CONFIG_PROGRAM(servicemodelreg,,[install])
 WINE_CONFIG_PROGRAM(services,,[clean,install])

@@ -376,9 +376,10 @@ static void _expect_no_children(IXMLDOMNode *node, int line)
 #define EXPECT_REF(node,ref) _expect_ref((IUnknown*)node, ref, __LINE__)
 static void _expect_ref(IUnknown* obj, ULONG ref, int line)
 {
-    ULONG rc = IUnknown_AddRef(obj);
-    IUnknown_Release(obj);
-    ok_(__FILE__,line)(rc-1 == ref, "expected refcount %d, got %d\n", ref, rc-1);
+    ULONG rc;
+    IUnknown_AddRef(obj);
+    rc = IUnknown_Release(obj);
+    ok_(__FILE__,line)(rc == ref, "expected refcount %d, got %d\n", ref, rc);
 }
 
 #define EXPECT_LIST_LEN(list,len) _expect_list_len(list, len, __LINE__)
@@ -2493,18 +2494,18 @@ todo_wine {
     EXPECT_REF(elem2, 2);
 
     todo_wine ok(unk == unk2, "got %p and %p\n", unk, unk2);
-
     IUnknown_Release(unk);
-    IUnknown_Release(unk2);
 
     /* IUnknown refcount is not affected by node refcount */
-    todo_wine EXPECT_REF(unk2, 3);
+    todo_wine EXPECT_REF(unk2, 4);
     IXMLDOMElement_AddRef(elem2);
-    todo_wine EXPECT_REF(unk2, 3);
+    todo_wine EXPECT_REF(unk2, 4);
     IXMLDOMElement_Release(elem2);
 
     IXMLDOMElement_Release(elem2);
-    todo_wine EXPECT_REF(unk2, 2);
+    todo_wine EXPECT_REF(unk2, 3);
+
+    IUnknown_Release(unk2);
 
     hr = IXMLDOMElement_get_childNodes( element, &node_list );
     EXPECT_HR(hr, S_OK);
@@ -6121,7 +6122,7 @@ static void test_testTransforms(void)
         ok(hr == S_OK, "ret %08x\n", hr );
         if(hr == S_OK)
         {
-            ok( compareIgnoreReturns( bOut, _bstr_(szTransformOutput)), "Stylesheet output not correct\n");
+            ok( compareIgnoreReturns( bOut, _bstr_(szTransformOutput)), "got output %s\n", wine_dbgstr_w(bOut));
             SysFreeString(bOut);
         }
 
@@ -8471,7 +8472,7 @@ todo_wine {
     hr = IXSLProcessor_get_output(processor, &v);
     ok(hr == S_OK, "got 0x%08x\n", hr);
     ok(V_VT(&v) == VT_BSTR, "got type %d\n", V_VT(&v));
-    ok(lstrcmpW(V_BSTR(&v), _bstr_("")) == 0, "got %s\n", wine_dbgstr_w(V_BSTR(&v)));
+    ok(*V_BSTR(&v) == 0, "got %s\n", wine_dbgstr_w(V_BSTR(&v)));
     IXMLDOMDocument_Release(doc2);
     VariantClear(&v);
 
@@ -9414,6 +9415,7 @@ static void test_selection(void)
 
     IEnumVARIANT_Release(enum1);
     IEnumVARIANT_Release(enum2);
+    IEnumVARIANT_Release(enum3);
 
     enum1 = NULL;
     hr = IXMLDOMSelection_get__newEnum(selection, (IUnknown**)&enum1);
@@ -10520,6 +10522,7 @@ todo_wine
     EXPECT_HR(hr, S_OK);
     ok(did == DISPID_DOM_COLLECTION_BASE, "got 0x%08x\n", did);
     IDispatchEx_Release(dispex);
+    IXMLDOMNamedNodeMap_Release(map);
 
     hr = IXMLDOMDocument_selectNodes(doc, _bstr_("root/b"), &node_list);
     EXPECT_HR(hr, S_OK);
@@ -10541,7 +10544,7 @@ todo_wine
     hr = IDispatchEx_GetDispID(dispex, _bstr_("1"), 0, &did);
     EXPECT_HR(hr, S_OK);
     ok(did == DISPID_DOM_COLLECTION_BASE+1, "got 0x%08x\n", did);
-    IDispatchEx_Release(dispex);
+    IXMLDOMNamedNodeMap_Release(map);
 
     did = -1;
     hr = IDispatchEx_GetDispID(dispex, _bstr_("item"), 0, &did);
@@ -10634,7 +10637,7 @@ todo_wine
     ok(V_VT(&ret) == VT_EMPTY, "got %d\n", V_VT(&ret));
     ok(broken(V_I4(&ret) == 1) || (V_I4(&ret) == 0), "got %d\n", V_I4(&ret));
 
-    IXMLDOMNamedNodeMap_Release(map);
+    IDispatchEx_Release(dispex);
     IXMLDOMElement_Release(elem);
 
     /* IXMLDOMImplementation */
@@ -11695,12 +11698,6 @@ static const char omitxmldecl_doc[] =
 "    <item name=\"item2\"/>"
 "</a>";
 
-static const char omitxmldecl_result[] =
-"<node>item1</node><node>item2</node>";
-
-static const char omitxmldecl_result2[] =
-"<node>item1</node><node>item2</node>\n";
-
 static void test_xsltext(void)
 {
     IXMLDOMDocument *doc, *doc2;
@@ -11730,9 +11727,7 @@ static void test_xsltext(void)
 
     hr = IXMLDOMDocument_transformNode(doc2, (IXMLDOMNode*)doc, &ret);
     ok(hr == S_OK, "got 0x%08x\n", hr);
-    /* Old enough libxslt places extra '\n' at the end of the output. */
-    ok(!lstrcmpW(ret, _bstr_(omitxmldecl_result)) ||
-       !lstrcmpW(ret, _bstr_(omitxmldecl_result2)), "transform result %s\n", wine_dbgstr_w(ret));
+    ok(!lstrcmpW(ret, _bstr_("<node>item1</node><node>item2</node>")), "transform result %s\n", wine_dbgstr_w(ret));
     SysFreeString(ret);
 
     IXMLDOMDocument_Release(doc2);

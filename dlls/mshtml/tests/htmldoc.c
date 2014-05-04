@@ -4977,6 +4977,7 @@ static IWebBrowser2 WebBrowser2 = { &WebBrowser2Vtbl };
 
 static HRESULT wb_qi(REFIID riid, void **ppv)
 {
+    static const IID IID_IWebBrowserPriv2IE7 = {0x1af32b6c, 0xa3ba,0x48b9,{0xb2,0x4e,0x8a,0xa9,0xc4,0x1f,0x6e,0xcd}};
     static const IID IID_IWebBrowserPriv2IE8XP = {0x486f6159,0x9f3f,0x4827,{0x82,0xd4,0x28,0x3c,0xef,0x39,0x77,0x33}};
 
     *ppv = NULL;
@@ -5004,6 +5005,11 @@ static HRESULT wb_qi(REFIID riid, void **ppv)
         /* IE8 and IE9 versions use the same IID, but have different declarations. */
         *ppv = is_ie9plus ? (void*)&WebBrowserPriv2IE9 : (void*)&WebBrowserPriv2IE8;
         return S_OK;
+    }
+
+    if(IsEqualGUID(riid, &IID_IWebBrowserPriv2IE7)) {
+        trace("QI(IID_IWebBrowserPriv2IE7)\n");
+        return E_NOINTERFACE;
     }
 
     if(IsEqualGUID(riid, &IID_IWebBrowserPriv2IE8XP)) {
@@ -5447,8 +5453,29 @@ static void test_ConnectionPoint(IConnectionPointContainer *container, REFIID ri
         hres = IConnectionPoint_Advise(cp, (IUnknown*)&PropertyNotifySink, NULL);
         ok(hres == S_OK, "Advise failed: %08x\n", hres);
     } else if(IsEqualGUID(&IID_IDispatch, riid)) {
+        IEnumConnections *enum_conn;
+        CONNECTDATA conn_data;
+        ULONG fetched;
+
         hres = IConnectionPoint_Advise(cp, (IUnknown*)&EventDispatch, &cookie);
         ok(hres == S_OK, "Advise failed: %08x\n", hres);
+
+        hres = IConnectionPoint_EnumConnections(cp, &enum_conn);
+        ok(hres == S_OK, "EnumConnections failed: %08x\n", hres);
+
+        fetched = 0;
+        hres = IEnumConnections_Next(enum_conn, 1, &conn_data, &fetched);
+        ok(hres == S_OK, "Next failed: %08x\n", hres);
+        ok(conn_data.pUnk == (IUnknown*)&EventDispatch, "conn_data.pUnk == EventDispatch\n");
+        ok(conn_data.dwCookie == cookie, "conn_data.dwCookie != cookie\n");
+        IUnknown_Release(conn_data.pUnk);
+
+        fetched = 0xdeadbeef;
+        hres = IEnumConnections_Next(enum_conn, 1, &conn_data, &fetched);
+        ok(hres == S_FALSE, "Next failed: %08x\n", hres);
+        ok(!fetched, "fetched = %d\n", fetched);
+
+        IEnumConnections_Release(enum_conn);
     }
 
     IConnectionPoint_Release(cp);
