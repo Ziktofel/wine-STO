@@ -27,12 +27,9 @@
 WINE_DEFAULT_DEBUG_CHANNEL(d3d_surface);
 WINE_DECLARE_DEBUG_CHANNEL(d3d_perf);
 
-void volume_set_container(struct wined3d_volume *volume, struct wined3d_texture *container)
-{
-    TRACE("volume %p, container %p.\n", volume, container);
-
-    volume->container = container;
-}
+#define WINED3D_VFLAG_ALLOCATED         0x00000001
+#define WINED3D_VFLAG_SRGB_ALLOCATED    0x00000002
+#define WINED3D_VFLAG_CLIENT_STORAGE    0x00000004
 
 static BOOL volume_prepare_system_memory(struct wined3d_volume *volume)
 {
@@ -371,7 +368,7 @@ static void wined3d_volume_load_location(struct wined3d_volume *volume,
             break;
 
         case WINED3D_LOCATION_BUFFER:
-            if (!volume->pbo || !(volume->flags & WINED3D_VFLAG_PBO))
+            if (!volume->pbo)
                 ERR("Trying to load WINED3D_LOCATION_BUFFER without setting it up first.\n");
 
             if (volume->locations & WINED3D_LOCATION_DISCARDED)
@@ -461,6 +458,18 @@ static void wined3d_volume_free_pbo(struct wined3d_volume *volume)
     context_release(context);
 }
 
+void wined3d_volume_destroy(struct wined3d_volume *volume)
+{
+    TRACE("volume %p.\n", volume);
+
+    if (volume->pbo)
+        wined3d_volume_free_pbo(volume);
+
+    resource_cleanup(&volume->resource);
+    volume->resource.parent_ops->wined3d_object_destroyed(volume->resource.parent);
+    HeapFree(GetProcessHeap(), 0, volume);
+}
+
 static void volume_unload(struct wined3d_resource *resource)
 {
     struct wined3d_volume *volume = volume_from_resource(resource);
@@ -504,46 +513,16 @@ static void volume_unload(struct wined3d_resource *resource)
 
 ULONG CDECL wined3d_volume_incref(struct wined3d_volume *volume)
 {
-    ULONG refcount;
+    TRACE("Forwarding to container %p.\n", volume->container);
 
-    if (volume->container)
-    {
-        TRACE("Forwarding to container %p.\n", volume->container);
-        return wined3d_texture_incref(volume->container);
-    }
-
-    refcount = InterlockedIncrement(&volume->resource.ref);
-
-    TRACE("%p increasing refcount to %u.\n", volume, refcount);
-
-    return refcount;
+    return wined3d_texture_incref(volume->container);
 }
 
 ULONG CDECL wined3d_volume_decref(struct wined3d_volume *volume)
 {
-    ULONG refcount;
+    TRACE("Forwarding to container %p.\n", volume->container);
 
-    if (volume->container)
-    {
-        TRACE("Forwarding to container %p.\n", volume->container);
-        return wined3d_texture_decref(volume->container);
-    }
-
-    refcount = InterlockedDecrement(&volume->resource.ref);
-
-    TRACE("%p decreasing refcount to %u.\n", volume, refcount);
-
-    if (!refcount)
-    {
-        if (volume->pbo)
-            wined3d_volume_free_pbo(volume);
-
-        resource_cleanup(&volume->resource);
-        volume->resource.parent_ops->wined3d_object_destroyed(volume->resource.parent);
-        HeapFree(GetProcessHeap(), 0, volume);
-    }
-
-    return refcount;
+    return wined3d_texture_decref(volume->container);
 }
 
 void * CDECL wined3d_volume_get_parent(const struct wined3d_volume *volume)
@@ -652,7 +631,7 @@ HRESULT CDECL wined3d_volume_map(struct wined3d_volume *volume,
 
     flags = wined3d_resource_sanitize_map_flags(&volume->resource, flags);
 
-    if (volume->flags & WINED3D_VFLAG_PBO)
+    if (volume->resource.map_binding == WINED3D_LOCATION_BUFFER)
     {
         context = context_acquire(device, NULL);
         gl_info = context->gl_info;
@@ -748,11 +727,7 @@ HRESULT CDECL wined3d_volume_map(struct wined3d_volume *volume,
     if (!(flags & (WINED3D_MAP_NO_DIRTY_UPDATE | WINED3D_MAP_READONLY)))
     {
         wined3d_texture_set_dirty(volume->container);
-
-        if (volume->flags & WINED3D_VFLAG_PBO)
-            wined3d_volume_invalidate_location(volume, ~WINED3D_LOCATION_BUFFER);
-        else
-            wined3d_volume_invalidate_location(volume, ~WINED3D_LOCATION_SYSMEM);
+        wined3d_volume_invalidate_location(volume, ~volume->resource.map_binding);
     }
 
     volume->resource.map_count++;
@@ -778,7 +753,7 @@ HRESULT CDECL wined3d_volume_unmap(struct wined3d_volume *volume)
         return WINED3DERR_INVALIDCALL;
     }
 
-    if (volume->flags & WINED3D_VFLAG_PBO)
+    if (volume->resource.map_binding == WINED3D_LOCATION_BUFFER)
     {
         struct wined3d_device *device = volume->resource.device;
         struct wined3d_context *context = context_acquire(device, NULL);
@@ -797,8 +772,20 @@ HRESULT CDECL wined3d_volume_unmap(struct wined3d_volume *volume)
     return WINED3D_OK;
 }
 
+static ULONG volume_resource_incref(struct wined3d_resource *resource)
+{
+    return wined3d_volume_incref(volume_from_resource(resource));
+}
+
+static ULONG volume_resource_decref(struct wined3d_resource *resource)
+{
+    return wined3d_volume_decref(volume_from_resource(resource));
+}
+
 static const struct wined3d_resource_ops volume_resource_ops =
 {
+    volume_resource_incref,
+    volume_resource_decref,
     volume_unload,
 };
 
@@ -843,10 +830,10 @@ static HRESULT volume_init(struct wined3d_volume *volume, struct wined3d_texture
             && !format->convert)
     {
         wined3d_resource_free_sysmem(&volume->resource);
-        volume->flags |= WINED3D_VFLAG_PBO;
+        volume->resource.map_binding = WINED3D_LOCATION_BUFFER;
     }
 
-    volume_set_container(volume, container);
+    volume->container = container;
 
     return WINED3D_OK;
 }
@@ -879,8 +866,7 @@ HRESULT wined3d_volume_create(struct wined3d_texture *container, const struct wi
             wined3d_texture_get_parent(container), object, &parent, &parent_ops)))
     {
         WARN("Failed to create volume parent, hr %#x.\n", hr);
-        volume_set_container(object, NULL);
-        wined3d_volume_decref(object);
+        wined3d_volume_destroy(object);
         return hr;
     }
 
