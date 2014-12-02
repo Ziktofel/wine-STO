@@ -24,8 +24,12 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(dwrite);
 
-#define MS_TTCF_TAG DWRITE_MAKE_OPENTYPE_TAG('t','t','c','f')
+#define MS_HEAD_TAG DWRITE_MAKE_OPENTYPE_TAG('h','e','a','d')
+#define MS_HHEA_TAG DWRITE_MAKE_OPENTYPE_TAG('h','h','e','a')
 #define MS_OTTO_TAG DWRITE_MAKE_OPENTYPE_TAG('O','T','T','O')
+#define MS_OS2_TAG  DWRITE_MAKE_OPENTYPE_TAG('O','S','/','2')
+#define MS_POST_TAG DWRITE_MAKE_OPENTYPE_TAG('p','o','s','t')
+#define MS_TTCF_TAG DWRITE_MAKE_OPENTYPE_TAG('t','t','c','f')
 
 #ifdef WORDS_BIGENDIAN
 #define GET_BE_WORD(x) (x)
@@ -183,7 +187,38 @@ typedef struct
     USHORT usBreakChar;
     USHORT usMaxContext;
 } TT_OS2_V2;
+
+typedef struct {
+    ULONG  version;
+    SHORT  ascender;
+    SHORT  descender;
+    SHORT  linegap;
+    USHORT advanceWidthMax;
+    SHORT  minLeftSideBearing;
+    SHORT  minRightSideBearing;
+    SHORT  xMaxExtent;
+    SHORT  caretSlopeRise;
+    SHORT  caretSlopeRun;
+    SHORT  caretOffset;
+    SHORT  reserved[4];
+    SHORT  metricDataFormat;
+    USHORT numberOfHMetrics;
+} TT_HHEA;
+
 #include "poppack.h"
+
+enum OS2_FSSELECTION {
+    OS2_FSSELECTION_ITALIC           = 1 << 0,
+    OS2_FSSELECTION_UNDERSCORE       = 1 << 1,
+    OS2_FSSELECTION_NEGATIVE         = 1 << 2,
+    OS2_FSSELECTION_OUTLINED         = 1 << 3,
+    OS2_FSSELECTION_STRIKEOUT        = 1 << 4,
+    OS2_FSSELECTION_BOLD             = 1 << 5,
+    OS2_FSSELECTION_REGULAR          = 1 << 6,
+    OS2_FSSELECTION_USE_TYPO_METRICS = 1 << 7,
+    OS2_FSSELECTION_WWS              = 1 << 8,
+    OS2_FSSELECTION_OBLIQUE          = 1 << 9
+};
 
 typedef struct {
     WORD platformID;
@@ -260,6 +295,250 @@ enum TT_NAME_MAC_ENCODING_ID
     TT_NAME_MAC_ENCODING_VIETNAMESE,
     TT_NAME_MAC_ENCODING_SINDHI,
     TT_NAME_MAC_ENCODING_UNINTERPRETED
+};
+
+enum TT_NAME_MAC_LANGUAGE_ID
+{
+    TT_NAME_MAC_LANGID_ENGLISH = 0,
+    TT_NAME_MAC_LANGID_FRENCH,
+    TT_NAME_MAC_LANGID_GERMAN,
+    TT_NAME_MAC_LANGID_ITALIAN,
+    TT_NAME_MAC_LANGID_DUTCH,
+    TT_NAME_MAC_LANGID_SWEDISH,
+    TT_NAME_MAC_LANGID_SPANISH,
+    TT_NAME_MAC_LANGID_DANISH,
+    TT_NAME_MAC_LANGID_PORTUGUESE,
+    TT_NAME_MAC_LANGID_NORWEGIAN,
+    TT_NAME_MAC_LANGID_HEBREW,
+    TT_NAME_MAC_LANGID_JAPANESE,
+    TT_NAME_MAC_LANGID_ARABIC,
+    TT_NAME_MAC_LANGID_FINNISH,
+    TT_NAME_MAC_LANGID_GREEK,
+    TT_NAME_MAC_LANGID_ICELANDIC,
+    TT_NAME_MAC_LANGID_MALTESE,
+    TT_NAME_MAC_LANGID_TURKISH,
+    TT_NAME_MAC_LANGID_CROATIAN,
+    TT_NAME_MAC_LANGID_TRAD_CHINESE,
+    TT_NAME_MAC_LANGID_URDU,
+    TT_NAME_MAC_LANGID_HINDI,
+    TT_NAME_MAC_LANGID_THAI,
+    TT_NAME_MAC_LANGID_KOREAN,
+    TT_NAME_MAC_LANGID_LITHUANIAN,
+    TT_NAME_MAC_LANGID_POLISH,
+    TT_NAME_MAC_LANGID_HUNGARIAN,
+    TT_NAME_MAC_LANGID_ESTONIAN,
+    TT_NAME_MAC_LANGID_LATVIAN,
+    TT_NAME_MAC_LANGID_SAMI,
+    TT_NAME_MAC_LANGID_FAROESE,
+    TT_NAME_MAC_LANGID_FARSI,
+    TT_NAME_MAC_LANGID_RUSSIAN,
+    TT_NAME_MAC_LANGID_SIMPL_CHINESE,
+    TT_NAME_MAC_LANGID_FLEMISH,
+    TT_NAME_MAC_LANGID_GAELIC,
+    TT_NAME_MAC_LANGID_ALBANIAN,
+    TT_NAME_MAC_LANGID_ROMANIAN,
+    TT_NAME_MAC_LANGID_CZECH,
+    TT_NAME_MAC_LANGID_SLOVAK,
+    TT_NAME_MAC_LANGID_SLOVENIAN,
+    TT_NAME_MAC_LANGID_YIDDISH,
+    TT_NAME_MAC_LANGID_SERBIAN,
+    TT_NAME_MAC_LANGID_MACEDONIAN,
+    TT_NAME_MAC_LANGID_BULGARIAN,
+    TT_NAME_MAC_LANGID_UKRAINIAN,
+    TT_NAME_MAC_LANGID_BYELORUSSIAN,
+    TT_NAME_MAC_LANGID_UZBEK,
+    TT_NAME_MAC_LANGID_KAZAKH,
+    TT_NAME_MAC_LANGID_AZERB_CYR,
+    TT_NAME_MAC_LANGID_AZERB_ARABIC,
+    TT_NAME_MAC_LANGID_ARMENIAN,
+    TT_NAME_MAC_LANGID_GEORGIAN,
+    TT_NAME_MAC_LANGID_MOLDAVIAN,
+    TT_NAME_MAC_LANGID_KIRGHIZ,
+    TT_NAME_MAC_LANGID_TAJIKI,
+    TT_NAME_MAC_LANGID_TURKMEN,
+    TT_NAME_MAC_LANGID_MONGOLIAN,
+    TT_NAME_MAC_LANGID_MONGOLIAN_CYR,
+    TT_NAME_MAC_LANGID_PASHTO,
+    TT_NAME_MAC_LANGID_KURDISH,
+    TT_NAME_MAC_LANGID_KASHMIRI,
+    TT_NAME_MAC_LANGID_SINDHI,
+    TT_NAME_MAC_LANGID_TIBETAN,
+    TT_NAME_MAC_LANGID_NEPALI,
+    TT_NAME_MAC_LANGID_SANSKRIT,
+    TT_NAME_MAC_LANGID_MARATHI,
+    TT_NAME_MAC_LANGID_BENGALI,
+    TT_NAME_MAC_LANGID_ASSAMESE,
+    TT_NAME_MAC_LANGID_GUJARATI,
+    TT_NAME_MAC_LANGID_PUNJABI,
+    TT_NAME_MAC_LANGID_ORIYA,
+    TT_NAME_MAC_LANGID_MALAYALAM,
+    TT_NAME_MAC_LANGID_KANNADA,
+    TT_NAME_MAC_LANGID_TAMIL,
+    TT_NAME_MAC_LANGID_TELUGU,
+    TT_NAME_MAC_LANGID_SINHALESE,
+    TT_NAME_MAC_LANGID_BURMESE,
+    TT_NAME_MAC_LANGID_KHMER,
+    TT_NAME_MAC_LANGID_LAO,
+    TT_NAME_MAC_LANGID_VIETNAMESE,
+    TT_NAME_MAC_LANGID_INDONESIAN,
+    TT_NAME_MAC_LANGID_TAGALONG,
+    TT_NAME_MAC_LANGID_MALAY_ROMAN,
+    TT_NAME_MAC_LANGID_MALAY_ARABIC,
+    TT_NAME_MAC_LANGID_AMHARIC,
+    TT_NAME_MAC_LANGID_TIGRINYA,
+    TT_NAME_MAC_LANGID_GALLA,
+    TT_NAME_MAC_LANGID_SOMALI,
+    TT_NAME_MAC_LANGID_SWAHILI,
+    TT_NAME_MAC_LANGID_KINYARWANDA,
+    TT_NAME_MAC_LANGID_RUNDI,
+    TT_NAME_MAC_LANGID_NYANJA,
+    TT_NAME_MAC_LANGID_MALAGASY,
+    TT_NAME_MAC_LANGID_ESPERANTO,
+    TT_NAME_MAC_LANGID_WELSH,
+    TT_NAME_MAC_LANGID_BASQUE,
+    TT_NAME_MAC_LANGID_CATALAN,
+    TT_NAME_MAC_LANGID_LATIN,
+    TT_NAME_MAC_LANGID_QUENCHUA,
+    TT_NAME_MAC_LANGID_GUARANI,
+    TT_NAME_MAC_LANGID_AYMARA,
+    TT_NAME_MAC_LANGID_TATAR,
+    TT_NAME_MAC_LANGID_UIGHUR,
+    TT_NAME_MAC_LANGID_DZONGKHA,
+    TT_NAME_MAC_LANGID_JAVANESE,
+    TT_NAME_MAC_LANGID_SUNDANESE,
+    TT_NAME_MAC_LANGID_GALICIAN,
+    TT_NAME_MAC_LANGID_AFRIKAANS,
+    TT_NAME_MAC_LANGID_BRETON,
+    TT_NAME_MAC_LANGID_INUKTITUT,
+    TT_NAME_MAC_LANGID_SCOTTISH_GAELIC,
+    TT_NAME_MAC_LANGID_MANX_GAELIC,
+    TT_NAME_MAC_LANGID_IRISH_GAELIC,
+    TT_NAME_MAC_LANGID_TONGAN,
+    TT_NAME_MAC_LANGID_GREEK_POLYTONIC,
+    TT_NAME_MAC_LANGID_GREENLANDIC,
+    TT_NAME_MAC_LANGID_AZER_ROMAN
+};
+
+/* Names are indexed with TT_NAME_MAC_LANGUAGE_ID values */
+static const char name_mac_langid_to_locale[][10] = {
+    "en-US",
+    "fr-FR",
+    "de-DE",
+    "it-IT",
+    "nl-NL",
+    "sv-SE",
+    "es-ES",
+    "da-DA",
+    "pt-PT",
+    "no-NO",
+    "he-IL",
+    "ja-JP",
+    "ar-AR",
+    "fi-FI",
+    "el-GR",
+    "is-IS",
+    "mt-MT",
+    "tr-TR",
+    "hr-HR",
+    "zh-HK",
+    "ur-PK",
+    "hi-IN",
+    "th-TH",
+    "ko-KR",
+    "lt-LT",
+    "pl-PL",
+    "hu-HU",
+    "et-EE",
+    "lv-LV",
+    "se-NO",
+    "fo-FO",
+    "fa-IR",
+    "ru-RU",
+    "zh-CN",
+    "nl-BE",
+    "gd-GB",
+    "sq-AL",
+    "ro-RO",
+    "cs-CZ",
+    "sk-SK",
+    "sl-SI",
+    "",
+    "sr-Latn",
+    "mk-MK",
+    "bg-BG",
+    "uk-UA",
+    "be-BY",
+    "uz-Latn",
+    "kk-KZ",
+    "az-Cyrl-AZ",
+    "az-AZ",
+    "hy-AM",
+    "ka-GE",
+    "",
+    "",
+    "tg-TJ",
+    "tk-TM",
+    "mn-Mong",
+    "mn-MN",
+    "ps-AF",
+    "ku-Arab",
+    "",
+    "sd-Arab",
+    "bo-CN",
+    "ne-NP",
+    "sa-IN",
+    "mr-IN",
+    "bn-IN",
+    "as-IN",
+    "gu-IN",
+    "pa-Arab",
+    "or-IN",
+    "ml-IN",
+    "kn-IN",
+    "ta-LK",
+    "te-IN",
+    "si-LK",
+    "",
+    "km-KH",
+    "lo-LA",
+    "vi-VN",
+    "id-ID",
+    "",
+    "ms-MY",
+    "ms-Arab",
+    "am-ET",
+    "ti-ET",
+    "",
+    "",
+    "sw-KE",
+    "rw-RW",
+    "",
+    "",
+    "",
+    "",
+    "cy-GB",
+    "eu-ES",
+    "ca-ES",
+    "",
+    "",
+    "",
+    "",
+    "tt-RU",
+    "ug-CN",
+    "",
+    "",
+    "",
+    "gl-ES",
+    "af-ZA",
+    "br-FR",
+    "iu-Latn-CA",
+    "gd-GB",
+    "",
+    "ga-IE",
+    "",
+    "",
+    "kl-GL",
+    "az-Latn"
 };
 
 enum OPENTYPE_STRING_ID
@@ -614,50 +893,120 @@ HRESULT opentype_cmap_get_unicode_ranges(void *data, UINT32 max_count, DWRITE_UN
     return *count > max_count ? E_NOT_SUFFICIENT_BUFFER : S_OK;
 }
 
-VOID get_font_properties(LPCVOID os2, LPCVOID head, LPCVOID post, DWRITE_FONT_METRICS *metrics, DWRITE_FONT_STRETCH *stretch, DWRITE_FONT_WEIGHT *weight, DWRITE_FONT_STYLE *style)
+void opentype_get_font_metrics(IDWriteFontFileStream *stream, DWRITE_FONT_FACE_TYPE face_type, UINT32 face_index,
+    DWRITE_FONT_METRICS1 *metrics)
+{
+    void *os2_context, *head_context, *post_context, *hhea_context;
+    const TT_OS2_V2 *tt_os2;
+    const TT_HEAD *tt_head;
+    const TT_POST *tt_post;
+    const TT_HHEA *tt_hhea;
+
+    memset(metrics, 0, sizeof(*metrics));
+
+    opentype_get_font_table(stream, face_type, face_index, MS_OS2_TAG,  (const void**)&tt_os2, &os2_context, NULL, NULL);
+    opentype_get_font_table(stream, face_type, face_index, MS_HEAD_TAG, (const void**)&tt_head, &head_context, NULL, NULL);
+    opentype_get_font_table(stream, face_type, face_index, MS_POST_TAG, (const void**)&tt_post, &post_context, NULL, NULL);
+    opentype_get_font_table(stream, face_type, face_index, MS_HHEA_TAG, (const void**)&tt_hhea, &hhea_context, NULL, NULL);
+
+    if (tt_head) {
+        metrics->designUnitsPerEm = GET_BE_WORD(tt_head->unitsPerEm);
+        metrics->glyphBoxLeft = GET_BE_WORD(tt_head->xMin);
+        metrics->glyphBoxTop = GET_BE_WORD(tt_head->yMax);
+        metrics->glyphBoxRight = GET_BE_WORD(tt_head->xMax);
+        metrics->glyphBoxBottom = GET_BE_WORD(tt_head->yMin);
+    }
+
+    if (tt_os2) {
+        USHORT version = GET_BE_WORD(tt_os2->version);
+
+        metrics->ascent  = GET_BE_WORD(tt_os2->usWinAscent);
+        metrics->descent = GET_BE_WORD(tt_os2->usWinDescent);
+
+        /* line gap is estimated using two sets of ascender/descender values and 'hhea' line gap */
+        if (tt_hhea) {
+            SHORT descender = (SHORT)GET_BE_WORD(tt_hhea->descender);
+            INT32 linegap;
+
+            linegap = GET_BE_WORD(tt_hhea->ascender) + abs(descender) + GET_BE_WORD(tt_hhea->linegap) -
+                metrics->ascent - metrics->descent;
+            metrics->lineGap = linegap > 0 ? linegap : 0;
+        }
+
+        metrics->strikethroughPosition  = GET_BE_WORD(tt_os2->yStrikeoutPosition);
+        metrics->strikethroughThickness = GET_BE_WORD(tt_os2->yStrikeoutSize);
+        metrics->subscriptPositionX = GET_BE_WORD(tt_os2->ySubscriptXOffset);
+        /* Y offset is stored as positive offset below baseline */
+        metrics->subscriptPositionY = -GET_BE_WORD(tt_os2->ySubscriptYOffset);
+        metrics->subscriptSizeX = GET_BE_WORD(tt_os2->ySubscriptXSize);
+        metrics->subscriptSizeY = GET_BE_WORD(tt_os2->ySubscriptYSize);
+        metrics->superscriptPositionX = GET_BE_WORD(tt_os2->ySuperscriptXOffset);
+        metrics->superscriptPositionY = GET_BE_WORD(tt_os2->ySuperscriptYOffset);
+        metrics->superscriptSizeX = GET_BE_WORD(tt_os2->ySuperscriptXSize);
+        metrics->superscriptSizeY = GET_BE_WORD(tt_os2->ySuperscriptYSize);
+
+        /* version 2 fields */
+        if (version >= 2) {
+            metrics->capHeight = GET_BE_WORD(tt_os2->sCapHeight);
+            metrics->xHeight   = GET_BE_WORD(tt_os2->sxHeight);
+        }
+
+        /* version 4 fields */
+        if (version >= 4) {
+            if (GET_BE_WORD(tt_os2->fsSelection) & OS2_FSSELECTION_USE_TYPO_METRICS) {
+                SHORT descent = GET_BE_WORD(tt_os2->sTypoDescender);
+                metrics->ascent = GET_BE_WORD(tt_os2->sTypoAscender);
+                metrics->descent = descent < 0 ? -descent : 0;
+                metrics->lineGap = GET_BE_WORD(tt_os2->sTypoLineGap);
+                metrics->hasTypographicMetrics = TRUE;
+            }
+        }
+    }
+
+    if (tt_post) {
+        metrics->underlinePosition = GET_BE_WORD(tt_post->underlinePosition);
+        metrics->underlineThickness = GET_BE_WORD(tt_post->underlineThickness);
+    }
+
+    /* estimate missing metrics */
+    if (metrics->xHeight == 0)
+        metrics->xHeight = metrics->designUnitsPerEm / 2;
+    if (metrics->capHeight == 0)
+        metrics->capHeight = metrics->designUnitsPerEm * 7 / 10;
+
+    if (tt_os2)
+        IDWriteFontFileStream_ReleaseFileFragment(stream, os2_context);
+    if (tt_head)
+        IDWriteFontFileStream_ReleaseFileFragment(stream, head_context);
+    if (tt_post)
+        IDWriteFontFileStream_ReleaseFileFragment(stream, post_context);
+    if (tt_hhea)
+        IDWriteFontFileStream_ReleaseFileFragment(stream, hhea_context);
+}
+
+void opentype_get_font_properties(const void *os2, const void *head, DWRITE_FONT_STRETCH *stretch, DWRITE_FONT_WEIGHT *weight, DWRITE_FONT_STYLE *style)
 {
     TT_OS2_V2 *tt_os2 = (TT_OS2_V2*)os2;
     TT_HEAD *tt_head = (TT_HEAD*)head;
-    TT_POST *tt_post = (TT_POST*)post;
 
     /* default stretch, weight and style to normal */
     *stretch = DWRITE_FONT_STRETCH_NORMAL;
     *weight = DWRITE_FONT_WEIGHT_NORMAL;
     *style = DWRITE_FONT_STYLE_NORMAL;
 
-    memset(metrics, 0, sizeof(*metrics));
-
     /* DWRITE_FONT_STRETCH enumeration values directly match font data values */
-    if (tt_os2)
-    {
+    if (tt_os2) {
         if (GET_BE_WORD(tt_os2->usWidthClass) <= DWRITE_FONT_STRETCH_ULTRA_EXPANDED)
             *stretch = GET_BE_WORD(tt_os2->usWidthClass);
 
         *weight = GET_BE_WORD(tt_os2->usWeightClass);
         TRACE("stretch=%d, weight=%d\n", *stretch, *weight);
-
-        metrics->ascent    = GET_BE_WORD(tt_os2->sTypoAscender);
-        metrics->descent   = GET_BE_WORD(tt_os2->sTypoDescender);
-        metrics->lineGap   = GET_BE_WORD(tt_os2->sTypoLineGap);
-        metrics->capHeight = GET_BE_WORD(tt_os2->sCapHeight);
-        metrics->xHeight   = GET_BE_WORD(tt_os2->sxHeight);
-        metrics->strikethroughPosition  = GET_BE_WORD(tt_os2->yStrikeoutPosition);
-        metrics->strikethroughThickness = GET_BE_WORD(tt_os2->yStrikeoutSize);
     }
 
-    if (tt_head)
-    {
+    if (tt_head) {
         USHORT macStyle = GET_BE_WORD(tt_head->macStyle);
-        metrics->designUnitsPerEm = GET_BE_WORD(tt_head->unitsPerEm);
         if (macStyle & 0x0002)
             *style = DWRITE_FONT_STYLE_ITALIC;
-
-    }
-
-    if (tt_post)
-    {
-        metrics->underlinePosition = GET_BE_WORD(tt_post->underlinePosition);
-        metrics->underlineThickness = GET_BE_WORD(tt_post->underlineThickness);
     }
 }
 
@@ -666,6 +1015,8 @@ static UINT get_name_record_codepage(enum OPENTYPE_PLATFORM_ID platform, USHORT 
     UINT codepage = 0;
 
     switch (platform) {
+    case OPENTYPE_PLATFORM_UNICODE:
+        break;
     case OPENTYPE_PLATFORM_MAC:
         switch (encoding)
         {
@@ -737,6 +1088,39 @@ static UINT get_name_record_codepage(enum OPENTYPE_PLATFORM_ID platform, USHORT 
     return codepage;
 }
 
+static void get_name_record_locale(enum OPENTYPE_PLATFORM_ID platform, USHORT lang_id, WCHAR *locale, USHORT locale_len)
+{
+    static const WCHAR enusW[] = {'e','n','-','U','S',0};
+
+    switch (platform) {
+    case OPENTYPE_PLATFORM_MAC:
+    {
+        const char *locale_name = NULL;
+
+        if (lang_id > TT_NAME_MAC_LANGID_AZER_ROMAN)
+            ERR("invalid mac lang id %d\n", lang_id);
+        else if (!name_mac_langid_to_locale[lang_id][0])
+            FIXME("failed to map mac lang id %d to locale name\n", lang_id);
+        else
+            locale_name = name_mac_langid_to_locale[lang_id];
+
+        if (locale_name)
+            MultiByteToWideChar(CP_ACP, 0, name_mac_langid_to_locale[lang_id], -1, locale, locale_len);
+        else
+            strcpyW(locale, enusW);
+        break;
+    }
+    case OPENTYPE_PLATFORM_WIN:
+        if (!LCIDToLocaleName(MAKELCID(lang_id, SORT_DEFAULT), locale, locale_len, 0)) {
+            FIXME("failed to get locale name for lcid=0x%08x\n", MAKELCID(lang_id, SORT_DEFAULT));
+            strcpyW(locale, enusW);
+        }
+        break;
+    default:
+        FIXME("unknown platform %d\n", platform);
+    }
+}
+
 HRESULT opentype_get_font_strings_from_id(const void *table_data, DWRITE_INFORMATIONAL_STRING_ID id, IDWriteLocalizedStrings **strings)
 {
     const TT_NAME_V0 *header;
@@ -790,6 +1174,7 @@ HRESULT opentype_get_font_strings_from_id(const void *table_data, DWRITE_INFORMA
             UINT codepage;
 
             codepage = get_name_record_codepage(platform, encoding);
+            get_name_record_locale(platform, lang_id, locale, sizeof(locale)/sizeof(WCHAR));
 
             if (codepage) {
                 DWORD len = MultiByteToWideChar(codepage, 0, (LPSTR)(storage_area + offset), length, NULL, 0);
@@ -804,12 +1189,6 @@ HRESULT opentype_get_font_strings_from_id(const void *table_data, DWRITE_INFORMA
                 name_string = heap_strdupnW((LPWSTR)(storage_area + offset), length);
                 for (i = 0; i < length; i++)
                     name_string[i] = GET_BE_WORD(name_string[i]);
-            }
-
-            if (!LCIDToLocaleName(MAKELCID(lang_id, SORT_DEFAULT), locale, sizeof(locale)/sizeof(WCHAR), 0)) {
-                static const WCHAR enusW[] = {'e','n','-','u','s',0};
-                FIXME("failed to get locale name for lcid=0x%08x\n", MAKELCID(lang_id, SORT_DEFAULT));
-                strcpyW(locale, enusW);
             }
 
             TRACE("string %s for locale %s found\n", debugstr_w(name_string), debugstr_w(locale));

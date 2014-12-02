@@ -1161,7 +1161,7 @@ then
                          [libXxf86vm ${notice_platform}development files not found, XFree86 Vidmode won't be supported.])
 
         dnl *** Check for Transform functions in Xrender
-        if test "$ac_cv_header_X11_extensions_Xrender_h" = "yes" -a "x$ac_cv_lib_soname_X11" != "x" -a "x$ac_cv_lib_soname_Xext" != "x"
+        if test "$ac_cv_header_X11_extensions_Xrender_h" = "yes" -a "x$ac_cv_lib_soname_X11" != "x"
         then
             WINE_CHECK_SONAME(Xrender,XRenderQueryExtension,
               [AC_CHECK_LIB(Xrender,XRenderSetPictureTransform,
@@ -1359,7 +1359,7 @@ then
         [AC_CHECK_HEADER(gnutls/gnutls.h,
             [AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[#include <gnutls/gnutls.h>
 #include <gnutls/crypto.h>]], [[static typeof(gnutls_mac_get_key_size) *func; if (func) return 0;]])],
-                [WINE_CHECK_SONAME(gnutls,gnutls_global_init,,[GNUTLS_CFLAGS=""],[$GNUTLS_LIBS])])],
+                [WINE_CHECK_SONAME(gnutls,gnutls_global_init,,[GNUTLS_CFLAGS=""],[$GNUTLS_LIBS],[[libgnutls\\(-deb0\\)\\{0,1\\}]])])],
             [GNUTLS_CFLAGS=""])])
 fi
 WINE_WARNING_WITH(gnutls,[test "x$ac_cv_lib_soname_gnutls" = "x"],
@@ -2741,6 +2741,7 @@ WINE_CONFIG_DLL(crypt32,,[implib,po])
 WINE_CONFIG_TEST(dlls/crypt32/tests)
 WINE_CONFIG_DLL(cryptdlg,,[po])
 WINE_CONFIG_DLL(cryptdll,,[implib])
+WINE_CONFIG_DLL(cryptext)
 WINE_CONFIG_DLL(cryptnet,,[implib])
 WINE_CONFIG_TEST(dlls/cryptnet/tests)
 WINE_CONFIG_DLL(cryptui,,[implib,po])
@@ -3020,6 +3021,7 @@ WINE_CONFIG_DLL(msvcm90)
 WINE_CONFIG_DLL(msvcp100)
 WINE_CONFIG_TEST(dlls/msvcp100/tests)
 WINE_CONFIG_DLL(msvcp110)
+WINE_CONFIG_DLL(msvcp120)
 WINE_CONFIG_DLL(msvcp60)
 WINE_CONFIG_TEST(dlls/msvcp60/tests)
 WINE_CONFIG_DLL(msvcp70)
@@ -3030,6 +3032,7 @@ WINE_CONFIG_TEST(dlls/msvcp90/tests)
 WINE_CONFIG_DLL(msvcr100,,[implib])
 WINE_CONFIG_TEST(dlls/msvcr100/tests)
 WINE_CONFIG_DLL(msvcr110,,[implib])
+WINE_CONFIG_DLL(msvcr120,,[implib])
 WINE_CONFIG_DLL(msvcr70,,[implib])
 WINE_CONFIG_DLL(msvcr71,,[implib])
 WINE_CONFIG_DLL(msvcr80,,[implib])
@@ -3232,6 +3235,7 @@ WINE_CONFIG_TEST(dlls/version/tests)
 WINE_CONFIG_DLL(vmm.vxd,enable_win16)
 WINE_CONFIG_DLL(vnbt.vxd,enable_win16)
 WINE_CONFIG_DLL(vnetbios.vxd,enable_win16)
+WINE_CONFIG_DLL(vssapi)
 WINE_CONFIG_DLL(vtdapi.vxd,enable_win16)
 WINE_CONFIG_DLL(vwin32.vxd,enable_win16)
 WINE_CONFIG_DLL(w32skrnl,enable_win16)

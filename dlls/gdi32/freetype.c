@@ -529,10 +529,6 @@ static const WCHAR system_link[] = {'S','o','f','t','w','a','r','e','\\','M','i'
                                     'C','u','r','r','e','n','t','V','e','r','s','i','o','n','\\','F','o','n','t','L','i','n','k','\\',
                                     'S','y','s','t','e','m','L','i','n','k',0};
 
-static const WCHAR internal_system_link[] = {'S','o','f','t','w','a','r','e','\\','W','i','n','e','\\',
-                                    'F','o','n','t','L','i','n','k','\\',
-                                    'S','y','s','t','e','m','L','i','n','k',0};
-
 /****************************************
  *   Notes on .fon files
  *
@@ -4460,7 +4456,7 @@ typedef struct {
 
 static LONG load_VDMX(GdiFont *font, LONG height)
 {
-    WORD hdr[3], tmp;
+    WORD hdr[3];
     VDMX_group group;
     BYTE devXRatio, devYRatio;
     USHORT numRecs, numRatios;
@@ -4468,7 +4464,7 @@ static LONG load_VDMX(GdiFont *font, LONG height)
     LONG ppem = 0;
     int i;
 
-    result = get_font_data(font, MS_VDMX_TAG, 0, hdr, 6);
+    result = get_font_data(font, MS_VDMX_TAG, 0, hdr, sizeof(hdr));
 
     if(result == GDI_ERROR) /* no vdmx table present, use linear scaling */
 	return ppem;
@@ -4499,8 +4495,10 @@ static LONG load_VDMX(GdiFont *font, LONG height)
 	    devYRatio >= ratio.yStartRatio &&
 	    devYRatio <= ratio.yEndRatio))
 	    {
+		WORD tmp;
+
 		offset = (3 * 2) + (numRatios * 4) + (i * 2);
-		get_font_data(font, MS_VDMX_TAG, offset, &tmp, 2);
+		get_font_data(font, MS_VDMX_TAG, offset, &tmp, sizeof(tmp));
 		offset = GET_BE_WORD(tmp);
 		break;
 	    }
@@ -4508,7 +4506,7 @@ static LONG load_VDMX(GdiFont *font, LONG height)
 
     if(offset == -1) return 0;
 
-    if(get_font_data(font, MS_VDMX_TAG, offset, &group, 4) != GDI_ERROR) {
+    if(get_font_data(font, MS_VDMX_TAG, offset, &group, sizeof(group)) != GDI_ERROR) {
 	USHORT recs;
 	BYTE startsz, endsz;
 	WORD *vTable;
@@ -6937,7 +6935,6 @@ static DWORD get_glyph_outline(GdiFont *incoming_font, UINT glyph, UINT format,
             INT x, src_pitch, src_width, src_height, rgb_interval, hmul, vmul;
             INT x_shift, y_shift;
             BOOL rgb;
-            FT_LcdFilter lcdfilter = FT_LCD_FILTER_DEFAULT;
             FT_Render_Mode render_mode =
                 (format == WINE_GGO_HRGB_BITMAP || format == WINE_GGO_HBGR_BITMAP)?
                     FT_RENDER_MODE_LCD: FT_RENDER_MODE_LCD_V;
@@ -6948,20 +6945,17 @@ static DWORD get_glyph_outline(GdiFont *incoming_font, UINT glyph, UINT format,
                 return GDI_ERROR;
             }
 
-            if ( lcdfilter == FT_LCD_FILTER_DEFAULT || lcdfilter == FT_LCD_FILTER_LIGHT )
+            if ( render_mode == FT_RENDER_MODE_LCD)
             {
-                if ( render_mode == FT_RENDER_MODE_LCD)
-                {
-                    gm.gmBlackBoxX += 2;
-                    gm.gmptGlyphOrigin.x -= 1;
-                    left -= (1 << 6);
-                }
-                else
-                {
-                    gm.gmBlackBoxY += 2;
-                    gm.gmptGlyphOrigin.y += 1;
-                    top += (1 << 6);
-                }
+                gm.gmBlackBoxX += 2;
+                gm.gmptGlyphOrigin.x -= 1;
+                left -= (1 << 6);
+            }
+            else
+            {
+                gm.gmBlackBoxY += 2;
+                gm.gmptGlyphOrigin.y += 1;
+                top += (1 << 6);
             }
 
             width  = gm.gmBlackBoxX;
@@ -6981,7 +6975,7 @@ static DWORD get_glyph_outline(GdiFont *incoming_font, UINT glyph, UINT format,
                 pFT_Outline_Transform (&ft_face->glyph->outline, &transMatTategaki);
 
             if ( pFT_Library_SetLcdFilter )
-                pFT_Library_SetLcdFilter( library, lcdfilter );
+                pFT_Library_SetLcdFilter( library, FT_LCD_FILTER_DEFAULT );
             pFT_Render_Glyph (ft_face->glyph, render_mode);
 
             src = ft_face->glyph->bitmap.buffer;

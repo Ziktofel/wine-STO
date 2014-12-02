@@ -31,6 +31,7 @@
 #include "ole2.h"
 #include "perhist.h"
 #include "mshtmdid.h"
+#include "mshtmcid.h"
 
 #include "wine/debug.h"
 
@@ -1095,6 +1096,43 @@ static HRESULT WINAPI HTMLDocument_clear(IHTMLDocument2 *iface)
     return S_OK;
 }
 
+static const WCHAR fontnameW[] =
+    {'f','o','n','t','n','a','m','e',0};
+static const WCHAR insertorderedlistW[] =
+    {'i','n','s','e','r','t','o','r','d','e','r','e','d','l','i','s','t',0};
+static const WCHAR insertunorderedlistW[] =
+    {'i','n','s','e','r','t','u','n','o','r','d','e','r','e','d','l','i','s','t',0};
+static const WCHAR outdentW[] =
+    {'o','u','t','d','e','n','t',0};
+static const WCHAR respectvisibilityindesignW[] =
+    {'r','e','s','p','e','c','t','v','i','s','i','b','i','l','i','t','y','i','n','d','e','s','i','g','n',0};
+
+static const struct {
+    const WCHAR *name;
+    OLECMDID id;
+}command_names[] = {
+    {fontnameW, IDM_FONTNAME},
+    {insertorderedlistW, IDM_ORDERLIST},
+    {insertunorderedlistW, IDM_UNORDERLIST},
+    {outdentW, IDM_OUTDENT},
+    {respectvisibilityindesignW, IDM_RESPECTVISIBILITY_INDESIGN}
+};
+
+static BOOL cmdid_from_string(const WCHAR *str, OLECMDID *cmdid)
+{
+    int i;
+
+    for(i = 0; i < sizeof(command_names)/sizeof(*command_names); i++) {
+        if(!strcmpiW(command_names[i].name, str)) {
+            *cmdid = command_names[i].id;
+            return TRUE;
+        }
+    }
+
+    FIXME("Unknown command %s\n", debugstr_w(str));
+    return FALSE;
+}
+
 static HRESULT WINAPI HTMLDocument_queryCommandSupported(IHTMLDocument2 *iface, BSTR cmdID,
                                                         VARIANT_BOOL *pfRet)
 {
@@ -1147,8 +1185,28 @@ static HRESULT WINAPI HTMLDocument_execCommand(IHTMLDocument2 *iface, BSTR cmdID
                                 VARIANT_BOOL showUI, VARIANT value, VARIANT_BOOL *pfRet)
 {
     HTMLDocument *This = impl_from_IHTMLDocument2(iface);
-    FIXME("(%p)->(%s %x %s %p)\n", This, debugstr_w(cmdID), showUI, debugstr_variant(&value), pfRet);
-    return E_NOTIMPL;
+    OLECMDID cmdid;
+    VARIANT ret;
+    HRESULT hres;
+
+    TRACE("(%p)->(%s %x %s %p)\n", This, debugstr_w(cmdID), showUI, debugstr_variant(&value), pfRet);
+
+    if(!cmdid_from_string(cmdID, &cmdid))
+        return OLECMDERR_E_NOTSUPPORTED;
+
+    V_VT(&ret) = VT_EMPTY;
+    hres = IOleCommandTarget_Exec(&This->IOleCommandTarget_iface, &CGID_MSHTML, cmdid,
+            showUI ? 0 : OLECMDEXECOPT_DONTPROMPTUSER, &value, &ret);
+    if(FAILED(hres))
+        return hres;
+
+    if(V_VT(&ret) != VT_EMPTY) {
+        FIXME("Handle ret %s\n", debugstr_variant(&ret));
+        VariantClear(&ret);
+    }
+
+    *pfRet = VARIANT_TRUE;
+    return S_OK;
 }
 
 static HRESULT WINAPI HTMLDocument_execCommandShowHelp(IHTMLDocument2 *iface, BSTR cmdID,
@@ -2211,7 +2269,7 @@ static HRESULT WINAPI HTMLDocument3_getElementsByName(IHTMLDocument3 *iface, BST
      * types and search should be case insensitive. Those are currently not supported properly.
      */
     nsAString_InitDepend(&selector_str, selector);
-    nsres = nsIDOMNodeSelector_QuerySelectorAll(This->doc_node->nsnode_selector, &selector_str, &node_list);
+    nsres = nsIDOMHTMLDocument_QuerySelectorAll(This->doc_node->nsdoc, &selector_str, &node_list);
     nsAString_Finish(&selector_str);
     heap_free(selector);
     if(NS_FAILED(nsres)) {
@@ -4340,11 +4398,6 @@ static void HTMLDocumentNode_destructor(HTMLDOMNode *iface)
     while(!list_empty(&This->plugin_hosts))
         detach_plugin_host(LIST_ENTRY(list_head(&This->plugin_hosts), PluginHost, entry));
 
-    if(This->nsnode_selector) {
-        nsIDOMNodeSelector_Release(This->nsnode_selector);
-        This->nsnode_selector = NULL;
-    }
-
     if(!This->nsdoc && This->window) {
         /* document fragments own reference to inner window */
         IHTMLWindow2_Release(&This->window->base.IHTMLWindow2_iface);
@@ -4366,8 +4419,6 @@ static void HTMLDocumentNode_traverse(HTMLDOMNode *iface, nsCycleCollectionTrave
 {
     HTMLDocumentNode *This = impl_from_HTMLDOMNode(iface);
 
-    if(This->nsnode_selector)
-        note_cc_edge((nsISupports*)This->nsnode_selector, "This->nsnode_selector", cb);
     if(This->nsdoc)
         note_cc_edge((nsISupports*)This->nsdoc, "This->nsdoc", cb);
 }
@@ -4375,11 +4426,6 @@ static void HTMLDocumentNode_traverse(HTMLDOMNode *iface, nsCycleCollectionTrave
 static void HTMLDocumentNode_unlink(HTMLDOMNode *iface)
 {
     HTMLDocumentNode *This = impl_from_HTMLDOMNode(iface);
-
-    if(This->nsnode_selector) {
-        nsIDOMNodeSelector_Release(This->nsnode_selector);
-        This->nsnode_selector = NULL;
-    }
 
     if(This->nsdoc) {
         nsIDOMHTMLDocument *nsdoc = This->nsdoc;
@@ -4534,7 +4580,6 @@ static HTMLDocumentNode *alloc_doc_node(HTMLDocumentObj *doc_obj, HTMLInnerWindo
 HRESULT create_doc_from_nsdoc(nsIDOMHTMLDocument *nsdoc, HTMLDocumentObj *doc_obj, HTMLInnerWindow *window, HTMLDocumentNode **ret)
 {
     HTMLDocumentNode *doc;
-    nsresult nsres;
 
     doc = alloc_doc_node(doc_obj, window);
     if(!doc)
@@ -4547,9 +4592,6 @@ HRESULT create_doc_from_nsdoc(nsIDOMHTMLDocument *nsdoc, HTMLDocumentObj *doc_ob
 
     nsIDOMHTMLDocument_AddRef(nsdoc);
     doc->nsdoc = nsdoc;
-
-    nsres = nsIDOMHTMLDocument_QueryInterface(nsdoc, &IID_nsIDOMNodeSelector, (void**)&doc->nsnode_selector);
-    assert(nsres == NS_OK);
 
     init_document_mutation(doc);
     doc_init_events(doc);

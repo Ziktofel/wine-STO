@@ -30,13 +30,6 @@ static inline int get_ref(IUnknown *obj)
     return IUnknown_Release(obj);
 }
 
-#define check_ref(obj, exp) _check_ref(__LINE__, obj, exp)
-static inline void _check_ref(unsigned int line, IUnknown *obj, int exp)
-{
-    int ref = get_ref(obj);
-    ok_(__FILE__, line)(exp == ref, "Invalid refcount. Expected %d, got %d\n", exp, ref);
-}
-
 #define check_release(obj, exp) _check_release(__LINE__, obj, exp)
 static inline void _check_release(unsigned int line, IUnknown *obj, int exp)
 {
@@ -78,6 +71,16 @@ static const unsigned char bmp_8bpp[] = {
 0x00,0x00,0x04,0x00,0x00,0x00,0x12,0x0b,0x00,0x00,0x12,0x0b,0x00,0x00,0x02,0x00,
 0x00,0x00,0x02,0x00,0x00,0x00,0xf1,0xf2,0xf3,0x80,0xf4,0xf5,0xf6,0x81,0x00,0x00,
 0x00,0x00
+};
+
+static const unsigned char png_grayscale[] =
+{
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49,
+    0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x00,
+    0x00, 0x00, 0x00, 0x3a, 0x7e, 0x9b, 0x55, 0x00, 0x00, 0x00, 0x0a, 0x49, 0x44,
+    0x41, 0x54, 0x08, 0xd7, 0x63, 0xf8, 0x0f, 0x00, 0x01, 0x01, 0x01, 0x00, 0x1b,
+    0xb6, 0xee, 0x56, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42,
+    0x60, 0x82
 };
 
 /* 2x2 A8R8G8B8 pixel data */
@@ -493,6 +496,12 @@ static void test_D3DXGetImageInfo(void)
     ok(info.Depth == 1, "Got depth %u, expected 1\n", info.Depth);
     ok(info.Format == D3DFMT_P8, "Got format %u, expected %u\n", info.Format, D3DFMT_P8);
 
+    /* Grayscale PNG */
+    hr = D3DXGetImageInfoFromFileInMemory(png_grayscale, sizeof(png_grayscale), &info);
+    ok(hr == D3D_OK, "D3DXGetImageInfoFromFileInMemory returned %#x, expected %#x\n", hr, D3D_OK);
+    ok(info.Depth == 1, "Got depth %u, expected 1\n", info.Depth);
+    ok(info.Format == D3DFMT_L8, "Got format %u, expected %u\n", info.Format, D3DFMT_L8);
+
     /* test DDS support */
     hr = D3DXGetImageInfoFromFileInMemory(dds_24bit, sizeof(dds_24bit), &info);
     ok(hr == D3D_OK, "D3DXGetImageInfoFromFileInMemory returned %#x, expected %#x\n", hr, D3D_OK);
@@ -590,13 +599,6 @@ static void test_D3DXGetImageInfo(void)
     /* cleanup */
     if(testdummy_ok) DeleteFileA("testdummy.bmp");
     if(testbitmap_ok) DeleteFileA("testbitmap.bmp");
-}
-
-#define check_pixel_1bpp(lockrect, x, y, color) _check_pixel_1bpp(__LINE__, lockrect, x, y, color)
-static inline void _check_pixel_1bpp(unsigned int line, const D3DLOCKED_RECT *lockrect, int x, int y, BYTE expected_color)
-{
-    BYTE color = ((BYTE*)lockrect->pBits)[x + y * lockrect->Pitch];
-    ok_(__FILE__, line)(color == expected_color, "Got color 0x%02x, expected 0x%02x\n", color, expected_color);
 }
 
 #define check_pixel_2bpp(lockrect, x, y, color) _check_pixel_2bpp(__LINE__, lockrect, x, y, color)

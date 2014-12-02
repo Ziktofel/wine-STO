@@ -52,6 +52,10 @@
 #include "wine/rbtree.h"
 #include "wine/wgl_driver.h"
 
+#ifndef ARRAY_SIZE
+#define ARRAY_SIZE(array) (sizeof(array) / sizeof((array)[0]))
+#endif
+
 /* Driver quirks */
 #define WINED3D_QUIRK_ARB_VS_OFFSET_LIMIT       0x00000001
 #define WINED3D_QUIRK_SET_TEXCOORD_W            0x00000002
@@ -139,6 +143,14 @@ static inline BOOL is_identity_fixup(struct color_fixup_desc fixup)
 static inline BOOL is_complex_fixup(struct color_fixup_desc fixup)
 {
     return fixup.x_source == CHANNEL_SOURCE_COMPLEX0 || fixup.x_source == CHANNEL_SOURCE_COMPLEX1;
+}
+
+static inline BOOL is_same_fixup(struct color_fixup_desc f1, struct color_fixup_desc f2)
+{
+    return f1.x_sign_fixup == f2.x_sign_fixup && f1.x_source == f2.x_source
+            && f1.y_sign_fixup == f2.y_sign_fixup && f1.y_source == f2.y_source
+            && f1.z_sign_fixup == f2.z_sign_fixup && f1.z_source == f2.z_source
+            && f1.w_sign_fixup == f2.w_sign_fixup && f1.w_source == f2.w_source;
 }
 
 static inline enum complex_fixup get_complex_fixup(struct color_fixup_desc fixup)
@@ -535,6 +547,7 @@ enum WINED3D_SHADER_INSTRUCTION_HANDLER
     WINED3DSIH_TEXREG2GB,
     WINED3DSIH_TEXREG2RGB,
     WINED3DSIH_UDIV,
+    WINED3DSIH_UGE,
     WINED3DSIH_USHR,
     WINED3DSIH_UTOF,
     WINED3DSIH_XOR,
@@ -1502,6 +1515,7 @@ enum wined3d_pci_device
     CARD_NVIDIA_GEFORCE_GTX670      = 0x1189,
     CARD_NVIDIA_GEFORCE_GTX670MX    = 0x11a1,
     CARD_NVIDIA_GEFORCE_GTX680      = 0x1180,
+    CARD_NVIDIA_GEFORCE_GT750M      = 0x0fe9,
     CARD_NVIDIA_GEFORCE_GTX750      = 0x1381,
     CARD_NVIDIA_GEFORCE_GTX750TI    = 0x1380,
     CARD_NVIDIA_GEFORCE_GTX760      = 0x1187,
@@ -1510,6 +1524,7 @@ enum wined3d_pci_device
     CARD_NVIDIA_GEFORCE_GTX770      = 0x1184,
     CARD_NVIDIA_GEFORCE_GTX780      = 0x1004,
     CARD_NVIDIA_GEFORCE_GTX780TI    = 0x100a,
+    CARD_NVIDIA_GEFORCE_GTX970      = 0x13c2,
 
     CARD_VMWARE_SVGA3D              = 0x0405,
 
@@ -2669,9 +2684,9 @@ struct wined3d_swapchain
     struct wined3d_texture **back_buffers;
     struct wined3d_texture *front_buffer;
     struct wined3d_swapchain_desc desc;
-    struct wined3d_display_mode original_mode;
+    struct wined3d_display_mode original_mode, d3d_mode;
     struct wined3d_gamma_ramp orig_gamma;
-    BOOL render_to_fbo;
+    BOOL render_to_fbo, reapply_mode;
     const struct wined3d_format *ds_format;
     struct wined3d_palette *palette;
 
@@ -2689,6 +2704,7 @@ struct wined3d_swapchain
 
 void x11_copy_to_screen(const struct wined3d_swapchain *swapchain, const RECT *rect) DECLSPEC_HIDDEN;
 
+void wined3d_swapchain_activate(struct wined3d_swapchain *swapchain, BOOL activate) DECLSPEC_HIDDEN;
 struct wined3d_context *swapchain_get_context(struct wined3d_swapchain *swapchain) DECLSPEC_HIDDEN;
 void swapchain_destroy_contexts(struct wined3d_swapchain *swapchain) DECLSPEC_HIDDEN;
 HDC swapchain_get_backup_dc(struct wined3d_swapchain *swapchain) DECLSPEC_HIDDEN;
@@ -2879,6 +2895,7 @@ struct wined3d_shader
 
     struct wined3d_shader_signature_element input_signature[max(MAX_ATTRIBS, MAX_REG_INPUT)];
     struct wined3d_shader_signature_element output_signature[MAX_REG_OUTPUT];
+    char *signature_strings;
 
     /* Pointer to the parent device */
     struct wined3d_device *device;

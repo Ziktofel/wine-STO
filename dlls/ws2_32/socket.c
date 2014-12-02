@@ -4386,27 +4386,36 @@ static void release_poll_fds( const WS_fd_set *readfds, const WS_fd_set *writefd
 static int get_poll_results( WS_fd_set *readfds, WS_fd_set *writefds, WS_fd_set *exceptfds,
                              const struct pollfd *fds )
 {
+    unsigned int exceptfds_off = (readfds ? readfds->fd_count : 0) + (writefds ? writefds->fd_count : 0);
     unsigned int i, j = 0, k, total = 0;
 
     if (readfds)
     {
         for (i = k = 0; i < readfds->fd_count; i++, j++)
-            if (fds[j].revents) readfds->fd_array[k++] = readfds->fd_array[i];
+        {
+
+            if (fds[j].revents ||
+                    (readfds==writefds &&  (fds[readfds->fd_count+i].revents & POLLOUT) &&
+                     !(fds[readfds->fd_count+i].revents & POLLHUP)) ||
+                    (readfds==exceptfds && fds[exceptfds_off+i].revents))
+                readfds->fd_array[k++] = readfds->fd_array[i];
+        }
         readfds->fd_count = k;
         total += k;
     }
-    if (writefds)
+    if (writefds && writefds!=readfds)
     {
         for (i = k = 0; i < writefds->fd_count; i++, j++)
-            if ((fds[j].revents & POLLOUT) && !(fds[j].revents & POLLHUP))
+            if (((fds[j].revents & POLLOUT) && !(fds[j].revents & POLLHUP)) ||
+                    (writefds==exceptfds && fds[exceptfds_off+i].revents))
                 writefds->fd_array[k++] = writefds->fd_array[i];
         writefds->fd_count = k;
         total += k;
     }
-    if (exceptfds)
+    if (exceptfds && exceptfds!=readfds && exceptfds!=writefds)
     {
-        for (i = k = 0; i < exceptfds->fd_count; i++, j++)
-            if (fds[j].revents) exceptfds->fd_array[k++] = exceptfds->fd_array[i];
+        for (i = k = 0; i < exceptfds->fd_count; i++)
+            if (fds[exceptfds_off+i].revents) exceptfds->fd_array[k++] = exceptfds->fd_array[i];
         exceptfds->fd_count = k;
         total += k;
     }
@@ -6909,6 +6918,40 @@ PCSTR WINAPI WS_inet_ntop( INT family, PVOID addr, PSTR buffer, SIZE_T len )
     return NULL;
 #endif
 }
+
+/***********************************************************************
+*              inet_pton                      (WS2_32.@)
+*/
+INT WINAPI WS_inet_pton( INT family, PCSTR addr, PVOID buffer)
+{
+#ifdef HAVE_INET_PTON
+    int unixaf, ret;
+
+    TRACE("family %d, addr '%s', buffer (%p)\n", family, addr ? addr : "(null)", buffer);
+
+    if (!addr || !buffer)
+    {
+        SetLastError(WSAEFAULT);
+        return SOCKET_ERROR;
+    }
+
+    unixaf = convert_af_w2u(family);
+    if (unixaf != AF_INET && unixaf != AF_INET6)
+    {
+        SetLastError(WSAEAFNOSUPPORT);
+        return SOCKET_ERROR;
+    }
+
+    ret = inet_pton(unixaf, addr, buffer);
+    if (ret == -1) SetLastError(wsaErrno());
+    return ret;
+#else
+    FIXME( "not supported on this platform\n" );
+    WSASetLastError( WSAEAFNOSUPPORT );
+    return SOCKET_ERROR;
+#endif
+}
+
 
 /***********************************************************************
  *              WSAStringToAddressA                      (WS2_32.80)

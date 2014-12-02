@@ -241,6 +241,7 @@ enum wined3d_format_id
     WINED3DFMT_MULTI2_ARGB8                 = WINEMAKEFOURCC('M','E','T','1'),
     WINED3DFMT_G8R8_G8B8                    = WINEMAKEFOURCC('G','R','G','B'),
     WINED3DFMT_R8G8_B8G8                    = WINEMAKEFOURCC('R','G','B','G'),
+    WINED3DFMT_ATI1N                        = WINEMAKEFOURCC('A','T','I','1'),
     WINED3DFMT_ATI2N                        = WINEMAKEFOURCC('A','T','I','2'),
     WINED3DFMT_INST                         = WINEMAKEFOURCC('I','N','S','T'),
     WINED3DFMT_NVDB                         = WINEMAKEFOURCC('N','V','D','B'),
@@ -933,6 +934,12 @@ enum wined3d_display_rotation
 #define WINED3DCREATE_MIXED_VERTEXPROCESSING                    0x00000080
 #define WINED3DCREATE_DISABLE_DRIVER_MANAGEMENT                 0x00000100
 #define WINED3DCREATE_ADAPTERGROUP_DEVICE                       0x00000200
+#define WINED3DCREATE_DISABLE_DRIVER_MANAGEMENT_EX              0x00000400
+#define WINED3DCREATE_NOWINDOWCHANGES                           0x00000800
+#define WINED3DCREATE_DISABLE_PSGP_THREADING                    0x00002000
+#define WINED3DCREATE_ENABLE_PRESENTSTATS                       0x00004000
+#define WINED3DCREATE_DISABLE_PRINTSCREEN                       0x00008000
+#define WINED3DCREATE_SCREENSAVER                               0x10000000
 
 /* VTF defines */
 #define WINED3DDMAPSAMPLER                                      0x100
@@ -1230,6 +1237,7 @@ enum wined3d_display_rotation
 #define WINED3D_NO3D                                            0x00000002
 #define WINED3D_VIDMEM_ACCOUNTING                               0x00000004
 #define WINED3D_PRESENT_CONVERSION                              0x00000008
+#define WINED3D_RESTORE_MODE_ON_ACTIVATE                        0x00000010
 
 #define WINED3D_RESZ_CODE                                       0x7fa05000
 
@@ -1970,7 +1978,14 @@ struct wined3d_shader_signature
 {
     UINT element_count;
     struct wined3d_shader_signature_element *elements;
-    char *string_data;
+};
+
+struct wined3d_shader_desc
+{
+    const DWORD *byte_code;
+    const struct wined3d_shader_signature *input_signature;
+    const struct wined3d_shader_signature *output_signature;
+    unsigned int max_version;
 };
 
 struct wined3d_parent_ops
@@ -2412,15 +2427,12 @@ ULONG __cdecl wined3d_sampler_decref(struct wined3d_sampler *sampler);
 void * __cdecl wined3d_sampler_get_parent(const struct wined3d_sampler *sampler);
 ULONG __cdecl wined3d_sampler_incref(struct wined3d_sampler *sampler);
 
-HRESULT __cdecl wined3d_shader_create_gs(struct wined3d_device *device, const DWORD *byte_code,
-        const struct wined3d_shader_signature *output_signature, void *parent,
-        const struct wined3d_parent_ops *parent_ops, struct wined3d_shader **shader, unsigned int max_version);
-HRESULT __cdecl wined3d_shader_create_ps(struct wined3d_device *device, const DWORD *byte_code,
-        const struct wined3d_shader_signature *output_signature, void *parent,
-        const struct wined3d_parent_ops *parent_ops, struct wined3d_shader **shader, unsigned int max_version);
-HRESULT __cdecl wined3d_shader_create_vs(struct wined3d_device *device, const DWORD *byte_code,
-        const struct wined3d_shader_signature *output_signature, void *parent,
-        const struct wined3d_parent_ops *parent_ops, struct wined3d_shader **shader, unsigned int max_version);
+HRESULT __cdecl wined3d_shader_create_gs(struct wined3d_device *device, const struct wined3d_shader_desc *desc,
+        void *parent, const struct wined3d_parent_ops *parent_ops, struct wined3d_shader **shader);
+HRESULT __cdecl wined3d_shader_create_ps(struct wined3d_device *device, const struct wined3d_shader_desc *desc,
+        void *parent, const struct wined3d_parent_ops *parent_ops, struct wined3d_shader **shader);
+HRESULT __cdecl wined3d_shader_create_vs(struct wined3d_device *device, const struct wined3d_shader_desc *desc,
+        void *parent, const struct wined3d_parent_ops *parent_ops, struct wined3d_shader **shader);
 ULONG __cdecl wined3d_shader_decref(struct wined3d_shader *shader);
 HRESULT __cdecl wined3d_shader_get_byte_code(const struct wined3d_shader *shader,
         void *byte_code, UINT *byte_code_size);

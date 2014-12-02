@@ -22,6 +22,8 @@
 #include <limits.h>
 #include "d3d.h"
 
+static DEVMODEW registry_mode;
+
 struct vec2
 {
     float x, y;
@@ -389,12 +391,26 @@ static void destroy_material(IDirect3DMaterial3 *material)
     IDirect3DMaterial3_Release(material);
 }
 
-static const UINT *expect_messages;
+struct message
+{
+    UINT message;
+    BOOL check_wparam;
+    WPARAM expect_wparam;
+};
+
+static const struct message *expect_messages;
 
 static LRESULT CALLBACK test_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
 {
-    if (expect_messages && message == *expect_messages)
+    if (expect_messages && message == expect_messages->message)
+    {
+        if (expect_messages->check_wparam)
+            ok (wparam == expect_messages->expect_wparam,
+                    "Got unexpected wparam %lx for message %x, expected %lx.\n",
+                    wparam, message, expect_messages->expect_wparam);
+
         ++expect_messages;
+    }
 
     return DefWindowProcA(hwnd, message, wparam, lparam);
 }
@@ -2251,15 +2267,15 @@ static void test_wndproc(void)
     HRESULT hr;
     ULONG ref;
 
-    static const UINT messages[] =
+    static struct message messages[] =
     {
-        WM_WINDOWPOSCHANGING,
-        WM_MOVE,
-        WM_SIZE,
-        WM_WINDOWPOSCHANGING,
-        WM_ACTIVATE,
-        WM_SETFOCUS,
-        0,
+        {WM_WINDOWPOSCHANGING,  FALSE,  0},
+        {WM_MOVE,               FALSE,  0},
+        {WM_SIZE,               FALSE,  0},
+        {WM_WINDOWPOSCHANGING,  FALSE,  0},
+        {WM_ACTIVATE,           FALSE,  0},
+        {WM_SETFOCUS,           FALSE,  0},
+        {0,                     FALSE,  0},
     };
 
     /* DDSCL_EXCLUSIVE replaces the window's window proc. */
@@ -2279,7 +2295,7 @@ static void test_wndproc(void)
     expect_messages = messages;
     hr = IDirectDraw4_SetCooperativeLevel(ddraw, window, DDSCL_EXCLUSIVE | DDSCL_FULLSCREEN);
     ok(SUCCEEDED(hr), "SetCooperativeLevel failed, hr %#x.\n", hr);
-    ok(!*expect_messages, "Expected message %#x, but didn't receive it.\n", *expect_messages);
+    ok(!expect_messages->message, "Expected message %#x, but didn't receive it.\n", expect_messages->message);
     expect_messages = NULL;
     proc = GetWindowLongPtrA(window, GWLP_WNDPROC);
     ok(proc != (LONG_PTR)test_proc, "Expected wndproc != %#lx, got %#lx.\n",
@@ -2368,12 +2384,13 @@ static void test_wndproc(void)
 
 static void test_window_style(void)
 {
-    LONG style, exstyle, tmp;
+    LONG style, exstyle, tmp, expected_style;
     RECT fullscreen_rect, r;
     IDirectDraw4 *ddraw;
     HWND window;
     HRESULT hr;
     ULONG ref;
+    BOOL ret;
 
     window = CreateWindowA("static", "ddraw_test", WS_OVERLAPPEDWINDOW,
             0, 0, 100, 100, 0, 0, 0, 0);
@@ -2382,7 +2399,7 @@ static void test_window_style(void)
 
     style = GetWindowLongA(window, GWL_STYLE);
     exstyle = GetWindowLongA(window, GWL_EXSTYLE);
-    SetRect(&fullscreen_rect, 0, 0, GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN));
+    SetRect(&fullscreen_rect, 0, 0, registry_mode.dmPelsWidth, registry_mode.dmPelsHeight);
 
     hr = IDirectDraw4_SetCooperativeLevel(ddraw, window, DDSCL_EXCLUSIVE | DDSCL_FULLSCREEN);
     ok(SUCCEEDED(hr), "SetCooperativeLevel failed, hr %#x.\n", hr);
@@ -2399,6 +2416,20 @@ static void test_window_style(void)
     GetClientRect(window, &r);
     todo_wine ok(!EqualRect(&r, &fullscreen_rect), "Client rect and window rect are equal.\n");
 
+    ret = SetForegroundWindow(GetDesktopWindow());
+    ok(ret, "Failed to set foreground window.\n");
+
+    tmp = GetWindowLongA(window, GWL_STYLE);
+    todo_wine ok(tmp == style, "Expected window style %#x, got %#x.\n", style, tmp);
+    tmp = GetWindowLongA(window, GWL_EXSTYLE);
+    todo_wine ok(tmp == exstyle, "Expected window extended style %#x, got %#x.\n", exstyle, tmp);
+
+    ret = SetForegroundWindow(window);
+    ok(ret, "Failed to set foreground window.\n");
+    /* Windows 7 (but not Vista and XP) show the window when it receives focus. Hide it again,
+     * the next tests expect this. */
+    ShowWindow(window, SW_HIDE);
+
     hr = IDirectDraw4_SetCooperativeLevel(ddraw, window, DDSCL_NORMAL);
     ok(SUCCEEDED(hr), "SetCooperativeLevel failed, hr %#x.\n", hr);
 
@@ -2406,6 +2437,26 @@ static void test_window_style(void)
     todo_wine ok(tmp == style, "Expected window style %#x, got %#x.\n", style, tmp);
     tmp = GetWindowLongA(window, GWL_EXSTYLE);
     todo_wine ok(tmp == exstyle, "Expected window extended style %#x, got %#x.\n", exstyle, tmp);
+
+    ShowWindow(window, SW_SHOW);
+    hr = IDirectDraw4_SetCooperativeLevel(ddraw, window, DDSCL_EXCLUSIVE | DDSCL_FULLSCREEN);
+    ok(SUCCEEDED(hr), "SetCooperativeLevel failed, hr %#x.\n", hr);
+
+    tmp = GetWindowLongA(window, GWL_STYLE);
+    expected_style = style | WS_VISIBLE;
+    todo_wine ok(tmp == expected_style, "Expected window style %#x, got %#x.\n", expected_style, tmp);
+    tmp = GetWindowLongA(window, GWL_EXSTYLE);
+    expected_style = exstyle | WS_EX_TOPMOST;
+    todo_wine ok(tmp == expected_style, "Expected window extended style %#x, got %#x.\n", expected_style, tmp);
+
+    ret = SetForegroundWindow(GetDesktopWindow());
+    ok(ret, "Failed to set foreground window.\n");
+    tmp = GetWindowLongA(window, GWL_STYLE);
+    expected_style = style | WS_VISIBLE | WS_MINIMIZE;
+    todo_wine ok(tmp == expected_style, "Expected window style %#x, got %#x.\n", expected_style, tmp);
+    tmp = GetWindowLongA(window, GWL_EXSTYLE);
+    expected_style = exstyle | WS_EX_TOPMOST;
+    todo_wine ok(tmp == expected_style, "Expected window extended style %#x, got %#x.\n", expected_style, tmp);
 
     ref = IDirectDraw4_Release(ddraw);
     ok(ref == 0, "The ddraw object was not properly freed: refcount %u.\n", ref);
@@ -2486,10 +2537,39 @@ static LRESULT CALLBACK mode_set_proc2(HWND hwnd, UINT message, WPARAM wparam, L
     return test_proc(hwnd, message, wparam, lparam);
 }
 
+struct test_coop_level_mode_set_enum_param
+{
+    DWORD ddraw_width, ddraw_height, user32_width, user32_height;
+};
+
+static HRESULT CALLBACK test_coop_level_mode_set_enum_cb(DDSURFACEDESC2 *surface_desc, void *context)
+{
+    struct test_coop_level_mode_set_enum_param *param = context;
+
+    if (U1(U4(*surface_desc).ddpfPixelFormat).dwRGBBitCount != registry_mode.dmBitsPerPel)
+        return DDENUMRET_OK;
+    if (surface_desc->dwWidth == registry_mode.dmPelsWidth
+            && surface_desc->dwHeight == registry_mode.dmPelsHeight)
+        return DDENUMRET_OK;
+
+    if (!param->ddraw_width)
+    {
+        param->ddraw_width = surface_desc->dwWidth;
+        param->ddraw_height = surface_desc->dwHeight;
+        return DDENUMRET_OK;
+    }
+    if (surface_desc->dwWidth == param->ddraw_width && surface_desc->dwHeight == param->ddraw_height)
+        return DDENUMRET_OK;
+
+    param->user32_width = surface_desc->dwWidth;
+    param->user32_height = surface_desc->dwHeight;
+    return DDENUMRET_CANCEL;
+}
+
 static void test_coop_level_mode_set(void)
 {
     IDirectDrawSurface4 *primary;
-    RECT fullscreen_rect, r, s;
+    RECT registry_rect, ddraw_rect, user32_rect, r;
     IDirectDraw4 *ddraw;
     DDSURFACEDESC2 ddsd;
     WNDCLASSA wc = {0};
@@ -2497,21 +2577,81 @@ static void test_coop_level_mode_set(void)
     HRESULT hr;
     ULONG ref;
     MSG msg;
+    struct test_coop_level_mode_set_enum_param param;
+    DEVMODEW devmode;
+    BOOL ret;
+    LONG change_ret;
 
-    static const UINT exclusive_messages[] =
+    static const struct message exclusive_messages[] =
     {
-        WM_WINDOWPOSCHANGING,
-        WM_WINDOWPOSCHANGED,
-        WM_SIZE,
-        WM_DISPLAYCHANGE,
-        0,
+        {WM_WINDOWPOSCHANGING,  FALSE,  0},
+        {WM_WINDOWPOSCHANGED,   FALSE,  0},
+        {WM_SIZE,               FALSE,  0},
+        {WM_DISPLAYCHANGE,      FALSE,  0},
+        {0,                     FALSE,  0},
+    };
+    static const struct message exclusive_focus_loss_messages[] =
+    {
+        {WM_ACTIVATE,           TRUE,   WA_INACTIVE},
+        {WM_DISPLAYCHANGE,      FALSE,  0},
+        {WM_WINDOWPOSCHANGING,  FALSE,  0},
+        /* Like d3d8 and d3d9 ddraw seems to use SW_SHOWMINIMIZED instead of
+         * SW_MINIMIZED, causing a recursive window activation that does not
+         * produe the same result in Wine yet. Ignore the difference for now.
+         * {WM_ACTIVATE,           TRUE,   0x200000 | WA_ACTIVE}, */
+        {WM_WINDOWPOSCHANGED,   FALSE,  0},
+        {WM_MOVE,               FALSE,  0},
+        {WM_SIZE,               TRUE,   SIZE_MINIMIZED},
+        {WM_ACTIVATEAPP,        TRUE,   FALSE},
+        {0,                     FALSE,  0},
+    };
+    static const struct message exclusive_focus_restore_messages[] =
+    {
+        {WM_WINDOWPOSCHANGING,  FALSE,  0}, /* From the ShowWindow(SW_RESTORE). */
+        {WM_WINDOWPOSCHANGING,  FALSE,  0}, /* Generated by ddraw, matches d3d9 behavior. */
+        {WM_WINDOWPOSCHANGED,   FALSE,  0}, /* Matching previous message. */
+        {WM_SIZE,               FALSE,  0}, /* DefWindowProc. */
+        {WM_DISPLAYCHANGE,      FALSE,  0}, /* Ddraw restores mode. */
+        /* Native redundantly sets the window size here. */
+        {WM_ACTIVATEAPP,        TRUE,   TRUE}, /* End of ddraw's hooks. */
+        {WM_WINDOWPOSCHANGED,   FALSE,  0}, /* Matching the one from ShowWindow. */
+        {WM_MOVE,               FALSE,  0}, /* DefWindowProc. */
+        {WM_SIZE,               TRUE,   SIZE_RESTORED}, /* DefWindowProc. */
+        {0,                     FALSE,  0},
     };
 
-    static const UINT normal_messages[] =
+    static const struct message normal_messages[] =
     {
-        WM_DISPLAYCHANGE,
-        0,
+        {WM_DISPLAYCHANGE,      FALSE,  0},
+        {0,                     FALSE,  0},
     };
+
+    ddraw = create_ddraw();
+    ok(!!ddraw, "Failed to create a ddraw object.\n");
+
+    memset(&param, 0, sizeof(param));
+    hr = IDirectDraw4_EnumDisplayModes(ddraw, 0, NULL, &param, test_coop_level_mode_set_enum_cb);
+    ok(SUCCEEDED(hr), "Failed to enumerate display mode, hr %#x.\n", hr);
+    ref = IDirectDraw4_Release(ddraw);
+    ok(ref == 0, "The ddraw object was not properly freed: refcount %u.\n", ref);
+
+    if (!param.user32_height)
+    {
+        skip("Fewer than 3 different modes supported, skipping mode restore test.\n");
+        return;
+    }
+
+    SetRect(&registry_rect, 0, 0, registry_mode.dmPelsWidth, registry_mode.dmPelsHeight);
+    SetRect(&ddraw_rect, 0, 0, param.ddraw_width, param.ddraw_height);
+    SetRect(&user32_rect, 0, 0, param.user32_width, param.user32_height);
+
+    memset(&devmode, 0, sizeof(devmode));
+    devmode.dmSize = sizeof(devmode);
+    devmode.dmFields = DM_PELSWIDTH | DM_PELSHEIGHT;
+    devmode.dmPelsWidth = param.user32_width;
+    devmode.dmPelsHeight = param.user32_height;
+    change_ret = ChangeDisplaySettingsW(&devmode, CDS_FULLSCREEN);
+    ok(change_ret == DISP_CHANGE_SUCCESSFUL, "Failed to change display mode, ret %#x.\n", change_ret);
 
     ddraw = create_ddraw();
     ok(!!ddraw, "Failed to create a ddraw object.\n");
@@ -2528,15 +2668,12 @@ static void test_coop_level_mode_set(void)
     window2 = CreateWindowA("ddraw_test_wndproc_wc2", "ddraw_test", WS_OVERLAPPEDWINDOW,
             0, 0, 100, 100, 0, 0, 0, 0);
 
-    SetRect(&fullscreen_rect, 0, 0, GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN));
-    SetRect(&s, 0, 0, 640, 480);
-
     hr = IDirectDraw4_SetCooperativeLevel(ddraw, window, DDSCL_EXCLUSIVE | DDSCL_FULLSCREEN);
     ok(SUCCEEDED(hr), "SetCooperativeLevel failed, hr %#x.\n", hr);
 
     GetWindowRect(window, &r);
-    ok(EqualRect(&r, &fullscreen_rect), "Expected {%d, %d, %d, %d}, got {%d, %d, %d, %d}.\n",
-            fullscreen_rect.left, fullscreen_rect.top, fullscreen_rect.right, fullscreen_rect.bottom,
+    ok(EqualRect(&r, &user32_rect), "Expected {%d, %d, %d, %d}, got {%d, %d, %d, %d}.\n",
+            user32_rect.left, user32_rect.top, user32_rect.right, user32_rect.bottom,
             r.left, r.top, r.right, r.bottom);
 
     memset(&ddsd, 0, sizeof(ddsd));
@@ -2548,14 +2685,14 @@ static void test_coop_level_mode_set(void)
     ok(SUCCEEDED(hr), "Failed to create surface, hr %#x.\n",hr);
     hr = IDirectDrawSurface4_GetSurfaceDesc(primary, &ddsd);
     ok(SUCCEEDED(hr), "Failed to get surface desc, hr %#x.\n", hr);
-    ok(ddsd.dwWidth == fullscreen_rect.right - fullscreen_rect.left, "Expected surface width %u, got %u.\n",
-            fullscreen_rect.right - fullscreen_rect.left, ddsd.dwWidth);
-    ok(ddsd.dwHeight == fullscreen_rect.bottom - fullscreen_rect.top, "Expected surface height %u, got %u.\n",
-            fullscreen_rect.bottom - fullscreen_rect.top, ddsd.dwHeight);
+    ok(ddsd.dwWidth == param.user32_width, "Expected surface width %u, got %u.\n",
+            param.user32_width, ddsd.dwWidth);
+    ok(ddsd.dwHeight == param.user32_height, "Expected surface height %u, got %u.\n",
+            param.user32_height, ddsd.dwHeight);
 
     GetWindowRect(window, &r);
-    ok(EqualRect(&r, &fullscreen_rect), "Expected {%d, %d, %d, %d}, got {%d, %d, %d, %d}.\n",
-            fullscreen_rect.left, fullscreen_rect.top, fullscreen_rect.right, fullscreen_rect.bottom,
+    ok(EqualRect(&r, &user32_rect), "Expected {%d, %d, %d, %d}, got {%d, %d, %d, %d}.\n",
+            user32_rect.left, user32_rect.top, user32_rect.right, user32_rect.bottom,
             r.left, r.top, r.right, r.bottom);
 
     PeekMessageA(&msg, 0, 0, 0, PM_NOREMOVE);
@@ -2563,26 +2700,26 @@ static void test_coop_level_mode_set(void)
     screen_size.cx = 0;
     screen_size.cy = 0;
 
-    hr = set_display_mode(ddraw, 640, 480);
+    hr = set_display_mode(ddraw, param.ddraw_width, param.ddraw_height);
     ok(SUCCEEDED(hr), "Failed to set display mode, hr %#x.\n", hr);
 
-    ok(!*expect_messages, "Expected message %#x, but didn't receive it.\n", *expect_messages);
+    ok(!expect_messages->message, "Expected message %#x, but didn't receive it.\n", expect_messages->message);
     expect_messages = NULL;
-    ok(screen_size.cx == s.right && screen_size.cy == s.bottom,
+    ok(screen_size.cx == param.ddraw_width && screen_size.cy == param.ddraw_height,
             "Expected screen size %ux%u, got %ux%u.\n",
-            s.right, s.bottom, screen_size.cx, screen_size.cy);
+            param.ddraw_width, param.ddraw_height, screen_size.cx, screen_size.cy);
 
     GetWindowRect(window, &r);
-    ok(EqualRect(&r, &s), "Expected {%d, %d, %d, %d}, got {%d, %d, %d, %d}.\n",
-            s.left, s.top, s.right, s.bottom,
+    ok(EqualRect(&r, &ddraw_rect), "Expected {%d, %d, %d, %d}, got {%d, %d, %d, %d}.\n",
+            ddraw_rect.left, ddraw_rect.top, ddraw_rect.right, ddraw_rect.bottom,
             r.left, r.top, r.right, r.bottom);
 
     hr = IDirectDrawSurface4_GetSurfaceDesc(primary, &ddsd);
     ok(SUCCEEDED(hr), "Failed to get surface desc, hr %#x.\n", hr);
-    ok(ddsd.dwWidth == fullscreen_rect.right - fullscreen_rect.left, "Expected surface width %u, got %u.\n",
-            fullscreen_rect.right - fullscreen_rect.left, ddsd.dwWidth);
-    ok(ddsd.dwHeight == fullscreen_rect.bottom - fullscreen_rect.top, "Expected surface height %u, got %u.\n",
-            fullscreen_rect.bottom - fullscreen_rect.top, ddsd.dwHeight);
+    ok(ddsd.dwWidth == param.user32_width, "Expected surface width %u, got %u.\n",
+            param.user32_width, ddsd.dwWidth);
+    ok(ddsd.dwHeight == param.user32_height, "Expected surface height %u, got %u.\n",
+            param.user32_height, ddsd.dwHeight);
     IDirectDrawSurface4_Release(primary);
 
     memset(&ddsd, 0, sizeof(ddsd));
@@ -2594,14 +2731,14 @@ static void test_coop_level_mode_set(void)
     ok(SUCCEEDED(hr), "Failed to create surface, hr %#x.\n",hr);
     hr = IDirectDrawSurface4_GetSurfaceDesc(primary, &ddsd);
     ok(SUCCEEDED(hr), "Failed to get surface desc, hr %#x.\n", hr);
-    ok(ddsd.dwWidth == s.right - s.left, "Expected surface width %u, got %u.\n",
-            s.right - s.left, ddsd.dwWidth);
-    ok(ddsd.dwHeight == s.bottom - s.top, "Expected surface height %u, got %u.\n",
-            s.bottom - s.top, ddsd.dwHeight);
+    ok(ddsd.dwWidth == param.ddraw_width, "Expected surface width %u, got %u.\n",
+            param.ddraw_width, ddsd.dwWidth);
+    ok(ddsd.dwHeight == param.ddraw_height, "Expected surface height %u, got %u.\n",
+            param.ddraw_height, ddsd.dwHeight);
 
     GetWindowRect(window, &r);
-    ok(EqualRect(&r, &s), "Expected {%d, %d, %d, %d}, got {%d, %d, %d, %d}.\n",
-            s.left, s.top, s.right, s.bottom,
+    ok(EqualRect(&r, &ddraw_rect), "Expected {%d, %d, %d, %d}, got {%d, %d, %d, %d}.\n",
+            ddraw_rect.left, ddraw_rect.top, ddraw_rect.right, ddraw_rect.bottom,
             r.left, r.top, r.right, r.bottom);
 
     PeekMessageA(&msg, 0, 0, 0, PM_NOREMOVE);
@@ -2609,27 +2746,84 @@ static void test_coop_level_mode_set(void)
     screen_size.cx = 0;
     screen_size.cy = 0;
 
-    hr = IDirectDraw_RestoreDisplayMode(ddraw);
-    ok(SUCCEEDED(hr), "RestoreDisplayMode failed, hr %#x.\n", hr);
+    change_ret = ChangeDisplaySettingsW(&devmode, CDS_FULLSCREEN);
+    ok(change_ret == DISP_CHANGE_SUCCESSFUL, "Failed to change display mode, ret %#x.\n", change_ret);
 
-    ok(!*expect_messages, "Expected message %#x, but didn't receive it.\n", *expect_messages);
+    ok(!expect_messages->message, "Expected message %#x, but didn't receive it.\n", expect_messages->message);
     expect_messages = NULL;
-    ok(screen_size.cx == fullscreen_rect.right && screen_size.cy == fullscreen_rect.bottom,
+    ok(screen_size.cx == param.user32_width && screen_size.cy == param.user32_height,
             "Expected screen size %ux%u, got %ux%u.\n",
-            fullscreen_rect.right, fullscreen_rect.bottom, screen_size.cx, screen_size.cy);
+            param.user32_width, param.user32_height, screen_size.cx, screen_size.cy);
 
     GetWindowRect(window, &r);
-    ok(EqualRect(&r, &fullscreen_rect), "Expected {%d, %d, %d, %d}, got {%d, %d, %d, %d}.\n",
-            fullscreen_rect.left, fullscreen_rect.top, fullscreen_rect.right, fullscreen_rect.bottom,
+    ok(EqualRect(&r, &user32_rect), "Expected {%d, %d, %d, %d}, got {%d, %d, %d, %d}.\n",
+            user32_rect.left, user32_rect.top, user32_rect.right, user32_rect.bottom,
+            r.left, r.top, r.right, r.bottom);
+
+    expect_messages = exclusive_focus_loss_messages;
+    ret = SetForegroundWindow(GetDesktopWindow());
+    ok(ret, "Failed to set foreground window.\n");
+    ok(!expect_messages->message, "Expected message %#x, but didn't receive it.\n", expect_messages->message);
+    memset(&devmode, 0, sizeof(devmode));
+    devmode.dmSize = sizeof(devmode);
+    ret = EnumDisplaySettingsW(NULL, ENUM_CURRENT_SETTINGS, &devmode);
+    ok(ret, "Failed to get display mode.\n");
+    ok(devmode.dmPelsWidth == registry_mode.dmPelsWidth
+            && devmode.dmPelsHeight == registry_mode.dmPelsHeight, "Got unexpect screen size %ux%u.\n",
+            devmode.dmPelsWidth, devmode.dmPelsHeight);
+
+    expect_messages = exclusive_focus_restore_messages;
+    ShowWindow(window, SW_RESTORE);
+    ok(!expect_messages->message, "Expected message %#x, but didn't receive it.\n", expect_messages->message);
+
+    GetWindowRect(window, &r);
+    ok(EqualRect(&r, &ddraw_rect), "Expected {%d, %d, %d, %d}, got {%d, %d, %d, %d}.\n",
+            ddraw_rect.left, ddraw_rect.top, ddraw_rect.right, ddraw_rect.bottom,
+            r.left, r.top, r.right, r.bottom);
+    ret = EnumDisplaySettingsW(NULL, ENUM_CURRENT_SETTINGS, &devmode);
+    ok(ret, "Failed to get display mode.\n");
+    ok(devmode.dmPelsWidth == param.ddraw_width
+            && devmode.dmPelsHeight == param.ddraw_height, "Got unexpect screen size %ux%u.\n",
+            devmode.dmPelsWidth, devmode.dmPelsHeight);
+
+    hr = IDirectDraw4_SetCooperativeLevel(ddraw, window, DDSCL_EXCLUSIVE | DDSCL_FULLSCREEN);
+    ok(SUCCEEDED(hr), "SetCooperativeLevel failed, hr %#x.\n", hr);
+    /* Normally the primary should be restored here. Unfortunately this causes the
+     * GetSurfaceDesc call after the next display mode change to crash on the Windows 8
+     * testbot. Another Restore call would presumably avoid the crash, but it also moots
+     * the point of the GetSurfaceDesc call. */
+
+    PeekMessageA(&msg, 0, 0, 0, PM_NOREMOVE);
+    expect_messages = exclusive_messages;
+    screen_size.cx = 0;
+    screen_size.cy = 0;
+
+    hr = IDirectDraw4_RestoreDisplayMode(ddraw);
+    ok(SUCCEEDED(hr), "RestoreDisplayMode failed, hr %#x.\n", hr);
+
+    ok(!expect_messages->message, "Expected message %#x, but didn't receive it.\n", expect_messages->message);
+    expect_messages = NULL;
+    ok(screen_size.cx == registry_mode.dmPelsWidth
+            && screen_size.cy == registry_mode.dmPelsHeight,
+            "Expected screen size %ux%u, got %ux%u.\n",
+            registry_mode.dmPelsWidth, registry_mode.dmPelsHeight, screen_size.cx, screen_size.cy);
+
+    GetWindowRect(window, &r);
+    ok(EqualRect(&r, &registry_rect), "Expected {%d, %d, %d, %d}, got {%d, %d, %d, %d}.\n",
+            registry_rect.left, registry_rect.top, registry_rect.right, registry_rect.bottom,
             r.left, r.top, r.right, r.bottom);
 
     hr = IDirectDrawSurface4_GetSurfaceDesc(primary, &ddsd);
     ok(SUCCEEDED(hr), "Failed to get surface desc, hr %#x.\n", hr);
-    ok(ddsd.dwWidth == s.right - s.left, "Expected surface width %u, got %u.\n",
-            s.right - s.left, ddsd.dwWidth);
-    ok(ddsd.dwHeight == s.bottom - s.top, "Expected surface height %u, got %u.\n",
-            s.bottom - s.top, ddsd.dwHeight);
+    ok(ddsd.dwWidth == param.ddraw_width, "Expected surface width %u, got %u.\n",
+            param.ddraw_width, ddsd.dwWidth);
+    ok(ddsd.dwHeight == param.ddraw_height, "Expected surface height %u, got %u.\n",
+            param.ddraw_height, ddsd.dwHeight);
     IDirectDrawSurface4_Release(primary);
+
+    /* For Wine. */
+    change_ret = ChangeDisplaySettingsW(NULL, CDS_FULLSCREEN);
+    ok(change_ret == DISP_CHANGE_SUCCESSFUL, "Failed to change display mode, ret %#x.\n", change_ret);
 
     memset(&ddsd, 0, sizeof(ddsd));
     ddsd.dwSize = sizeof(ddsd);
@@ -2640,30 +2834,30 @@ static void test_coop_level_mode_set(void)
     ok(SUCCEEDED(hr), "Failed to create surface, hr %#x.\n",hr);
     hr = IDirectDrawSurface4_GetSurfaceDesc(primary, &ddsd);
     ok(SUCCEEDED(hr), "Failed to get surface desc, hr %#x.\n", hr);
-    ok(ddsd.dwWidth == fullscreen_rect.right - fullscreen_rect.left, "Expected surface width %u, got %u.\n",
-            fullscreen_rect.right - fullscreen_rect.left, ddsd.dwWidth);
-    ok(ddsd.dwHeight == fullscreen_rect.bottom - fullscreen_rect.top, "Expected surface height %u, got %u.\n",
-            fullscreen_rect.bottom - fullscreen_rect.top, ddsd.dwHeight);
+    ok(ddsd.dwWidth == registry_mode.dmPelsWidth, "Expected surface width %u, got %u.\n",
+            registry_mode.dmPelsWidth, ddsd.dwWidth);
+    ok(ddsd.dwHeight == registry_mode.dmPelsHeight, "Expected surface height %u, got %u.\n",
+            registry_mode.dmPelsHeight, ddsd.dwHeight);
 
     GetWindowRect(window, &r);
-    ok(EqualRect(&r, &fullscreen_rect), "Expected {%d, %d, %d, %d}, got {%d, %d, %d, %d}.\n",
-            fullscreen_rect.left, fullscreen_rect.top, fullscreen_rect.right, fullscreen_rect.bottom,
+    ok(EqualRect(&r, &registry_rect), "Expected {%d, %d, %d, %d}, got {%d, %d, %d, %d}.\n",
+            registry_rect.left, registry_rect.top, registry_rect.right, registry_rect.bottom,
             r.left, r.top, r.right, r.bottom);
 
     hr = IDirectDraw4_SetCooperativeLevel(ddraw, window, DDSCL_NORMAL);
     ok(SUCCEEDED(hr), "SetCooperativeLevel failed, hr %#x.\n", hr);
 
     GetWindowRect(window, &r);
-    ok(EqualRect(&r, &fullscreen_rect), "Expected {%d, %d, %d, %d}, got {%d, %d, %d, %d}.\n",
-            fullscreen_rect.left, fullscreen_rect.top, fullscreen_rect.right, fullscreen_rect.bottom,
+    ok(EqualRect(&r, &registry_rect), "Expected {%d, %d, %d, %d}, got {%d, %d, %d, %d}.\n",
+            registry_rect.left, registry_rect.top, registry_rect.right, registry_rect.bottom,
             r.left, r.top, r.right, r.bottom);
 
     hr = IDirectDrawSurface4_GetSurfaceDesc(primary, &ddsd);
     ok(SUCCEEDED(hr), "Failed to get surface desc, hr %#x.\n", hr);
-    ok(ddsd.dwWidth == fullscreen_rect.right - fullscreen_rect.left, "Expected surface width %u, got %u.\n",
-            fullscreen_rect.right - fullscreen_rect.left, ddsd.dwWidth);
-    ok(ddsd.dwHeight == fullscreen_rect.bottom - fullscreen_rect.top, "Expected surface height %u, got %u.\n",
-            fullscreen_rect.bottom - fullscreen_rect.top, ddsd.dwHeight);
+    ok(ddsd.dwWidth == registry_mode.dmPelsWidth, "Expected surface width %u, got %u.\n",
+            registry_mode.dmPelsWidth, ddsd.dwWidth);
+    ok(ddsd.dwHeight == registry_mode.dmPelsHeight, "Expected surface height %u, got %u.\n",
+            registry_mode.dmPelsHeight, ddsd.dwHeight);
     IDirectDrawSurface4_Release(primary);
 
     memset(&ddsd, 0, sizeof(ddsd));
@@ -2675,14 +2869,14 @@ static void test_coop_level_mode_set(void)
     ok(SUCCEEDED(hr), "Failed to create surface, hr %#x.\n",hr);
     hr = IDirectDrawSurface4_GetSurfaceDesc(primary, &ddsd);
     ok(SUCCEEDED(hr), "Failed to get surface desc, hr %#x.\n", hr);
-    ok(ddsd.dwWidth == fullscreen_rect.right - fullscreen_rect.left, "Expected surface width %u, got %u.\n",
-            fullscreen_rect.right - fullscreen_rect.left, ddsd.dwWidth);
-    ok(ddsd.dwHeight == fullscreen_rect.bottom - fullscreen_rect.top, "Expected surface height %u, got %u.\n",
-            fullscreen_rect.bottom - fullscreen_rect.top, ddsd.dwHeight);
+    ok(ddsd.dwWidth == registry_mode.dmPelsWidth, "Expected surface width %u, got %u.\n",
+            registry_mode.dmPelsWidth, ddsd.dwWidth);
+    ok(ddsd.dwHeight == registry_mode.dmPelsHeight, "Expected surface height %u, got %u.\n",
+            registry_mode.dmPelsHeight, ddsd.dwHeight);
 
     GetWindowRect(window, &r);
-    ok(EqualRect(&r, &fullscreen_rect), "Expected {%d, %d, %d, %d}, got {%d, %d, %d, %d}.\n",
-            fullscreen_rect.left, fullscreen_rect.top, fullscreen_rect.right, fullscreen_rect.bottom,
+    ok(EqualRect(&r, &registry_rect), "Expected {%d, %d, %d, %d}, got {%d, %d, %d, %d}.\n",
+            registry_rect.left, registry_rect.top, registry_rect.right, registry_rect.bottom,
             r.left, r.top, r.right, r.bottom);
 
     PeekMessageA(&msg, 0, 0, 0, PM_NOREMOVE);
@@ -2690,24 +2884,44 @@ static void test_coop_level_mode_set(void)
     screen_size.cx = 0;
     screen_size.cy = 0;
 
-    hr = set_display_mode(ddraw, 640, 480);
+    devmode.dmFields = DM_PELSWIDTH | DM_PELSHEIGHT;
+    devmode.dmPelsWidth = param.user32_width;
+    devmode.dmPelsHeight = param.user32_height;
+    change_ret = ChangeDisplaySettingsW(&devmode, CDS_FULLSCREEN);
+    ok(change_ret == DISP_CHANGE_SUCCESSFUL, "Failed to change display mode, ret %#x.\n", change_ret);
+
+    ok(!expect_messages->message, "Expected message %#x, but didn't receive it.\n", expect_messages->message);
+    expect_messages = NULL;
+    ok(!screen_size.cx && !screen_size.cy, "Got unexpected screen size %ux%u.\n", screen_size.cx, screen_size.cy);
+
+    GetWindowRect(window, &r);
+    ok(EqualRect(&r, &registry_rect), "Expected {%d, %d, %d, %d}, got {%d, %d, %d, %d}.\n",
+            registry_rect.left, registry_rect.top, registry_rect.right, registry_rect.bottom,
+            r.left, r.top, r.right, r.bottom);
+
+    PeekMessageA(&msg, 0, 0, 0, PM_NOREMOVE);
+    expect_messages = normal_messages;
+    screen_size.cx = 0;
+    screen_size.cy = 0;
+
+    hr = set_display_mode(ddraw, param.ddraw_width, param.ddraw_height);
     ok(SUCCEEDED(hr), "Failed to set display mode, hr %#x.\n", hr);
 
-    ok(!*expect_messages, "Expected message %#x, but didn't receive it.\n", *expect_messages);
+    ok(!expect_messages->message, "Expected message %#x, but didn't receive it.\n", expect_messages->message);
     expect_messages = NULL;
     ok(!screen_size.cx && !screen_size.cy, "Got unexpected screen size %ux%u.\n", screen_size.cx, screen_size.cy);
 
     GetWindowRect(window, &r);
-    ok(EqualRect(&r, &fullscreen_rect), "Expected {%d, %d, %d, %d}, got {%d, %d, %d, %d}.\n",
-            fullscreen_rect.left, fullscreen_rect.top, fullscreen_rect.right, fullscreen_rect.bottom,
+    ok(EqualRect(&r, &registry_rect), "Expected {%d, %d, %d, %d}, got {%d, %d, %d, %d}.\n",
+            registry_rect.left, registry_rect.top, registry_rect.right, registry_rect.bottom,
             r.left, r.top, r.right, r.bottom);
 
     hr = IDirectDrawSurface4_GetSurfaceDesc(primary, &ddsd);
     ok(SUCCEEDED(hr), "Failed to get surface desc, hr %#x.\n", hr);
-    ok(ddsd.dwWidth == fullscreen_rect.right - fullscreen_rect.left, "Expected surface width %u, got %u.\n",
-            fullscreen_rect.right - fullscreen_rect.left, ddsd.dwWidth);
-    ok(ddsd.dwHeight == fullscreen_rect.bottom - fullscreen_rect.top, "Expected surface height %u, got %u.\n",
-            fullscreen_rect.bottom - fullscreen_rect.top, ddsd.dwHeight);
+    ok(ddsd.dwWidth == registry_mode.dmPelsWidth, "Expected surface width %u, got %u.\n",
+            registry_mode.dmPelsWidth, ddsd.dwWidth);
+    ok(ddsd.dwHeight == registry_mode.dmPelsHeight, "Expected surface height %u, got %u.\n",
+            registry_mode.dmPelsHeight, ddsd.dwHeight);
     IDirectDrawSurface4_Release(primary);
 
     memset(&ddsd, 0, sizeof(ddsd));
@@ -2719,14 +2933,14 @@ static void test_coop_level_mode_set(void)
     ok(SUCCEEDED(hr), "Failed to create surface, hr %#x.\n",hr);
     hr = IDirectDrawSurface4_GetSurfaceDesc(primary, &ddsd);
     ok(SUCCEEDED(hr), "Failed to get surface desc, hr %#x.\n", hr);
-    ok(ddsd.dwWidth == s.right - s.left, "Expected surface width %u, got %u.\n",
-            s.right - s.left, ddsd.dwWidth);
-    ok(ddsd.dwHeight == s.bottom - s.top, "Expected surface height %u, got %u.\n",
-            s.bottom - s.top, ddsd.dwHeight);
+    ok(ddsd.dwWidth == param.ddraw_width, "Expected surface width %u, got %u.\n",
+            param.ddraw_width, ddsd.dwWidth);
+    ok(ddsd.dwHeight == param.ddraw_height, "Expected surface height %u, got %u.\n",
+            param.ddraw_height, ddsd.dwHeight);
 
     GetWindowRect(window, &r);
-    ok(EqualRect(&r, &fullscreen_rect), "Expected {%d, %d, %d, %d}, got {%d, %d, %d, %d}.\n",
-            fullscreen_rect.left, fullscreen_rect.top, fullscreen_rect.right, fullscreen_rect.bottom,
+    ok(EqualRect(&r, &registry_rect), "Expected {%d, %d, %d, %d}, got {%d, %d, %d, %d}.\n",
+            registry_rect.left, registry_rect.top, registry_rect.right, registry_rect.bottom,
             r.left, r.top, r.right, r.bottom);
 
     PeekMessageA(&msg, 0, 0, 0, PM_NOREMOVE);
@@ -2734,25 +2948,35 @@ static void test_coop_level_mode_set(void)
     screen_size.cx = 0;
     screen_size.cy = 0;
 
-    hr = IDirectDraw_RestoreDisplayMode(ddraw);
+    hr = IDirectDraw4_RestoreDisplayMode(ddraw);
     ok(SUCCEEDED(hr), "RestoreDisplayMode failed, hr %#x.\n", hr);
 
-    ok(!*expect_messages, "Expected message %#x, but didn't receive it.\n", *expect_messages);
+    ok(!expect_messages->message, "Expected message %#x, but didn't receive it.\n", expect_messages->message);
     expect_messages = NULL;
     ok(!screen_size.cx && !screen_size.cy, "Got unexpected screen size %ux%u.\n", screen_size.cx, screen_size.cy);
 
     GetWindowRect(window, &r);
-    ok(EqualRect(&r, &fullscreen_rect), "Expected {%d, %d, %d, %d}, got {%d, %d, %d, %d}.\n",
-            fullscreen_rect.left, fullscreen_rect.top, fullscreen_rect.right, fullscreen_rect.bottom,
+    ok(EqualRect(&r, &registry_rect), "Expected {%d, %d, %d, %d}, got {%d, %d, %d, %d}.\n",
+            registry_rect.left, registry_rect.top, registry_rect.right, registry_rect.bottom,
             r.left, r.top, r.right, r.bottom);
 
     hr = IDirectDrawSurface4_GetSurfaceDesc(primary, &ddsd);
     ok(SUCCEEDED(hr), "Failed to get surface desc, hr %#x.\n", hr);
-    ok(ddsd.dwWidth == s.right - s.left, "Expected surface width %u, got %u.\n",
-            s.right - s.left, ddsd.dwWidth);
-    ok(ddsd.dwHeight == s.bottom - s.top, "Expected surface height %u, got %u.\n",
-            s.bottom - s.top, ddsd.dwHeight);
+    ok(ddsd.dwWidth == param.ddraw_width, "Expected surface width %u, got %u.\n",
+            param.ddraw_width, ddsd.dwWidth);
+    ok(ddsd.dwHeight == param.ddraw_height, "Expected surface height %u, got %u.\n",
+            param.ddraw_height, ddsd.dwHeight);
     IDirectDrawSurface4_Release(primary);
+
+    ret = EnumDisplaySettingsW(NULL, ENUM_CURRENT_SETTINGS, &devmode);
+    ok(ret, "Failed to get display mode.\n");
+    ok(devmode.dmPelsWidth == registry_mode.dmPelsWidth
+            && devmode.dmPelsHeight == registry_mode.dmPelsHeight,
+            "Expected resolution %ux%u, got %ux%u.\n",
+            registry_mode.dmPelsWidth, registry_mode.dmPelsHeight,
+            devmode.dmPelsWidth, devmode.dmPelsHeight);
+    change_ret = ChangeDisplaySettingsW(NULL, CDS_FULLSCREEN);
+    ok(change_ret == DISP_CHANGE_SUCCESSFUL, "Failed to change display mode, ret %#x.\n", change_ret);
 
     memset(&ddsd, 0, sizeof(ddsd));
     ddsd.dwSize = sizeof(ddsd);
@@ -2763,14 +2987,14 @@ static void test_coop_level_mode_set(void)
     ok(SUCCEEDED(hr), "Failed to create surface, hr %#x.\n",hr);
     hr = IDirectDrawSurface4_GetSurfaceDesc(primary, &ddsd);
     ok(SUCCEEDED(hr), "Failed to get surface desc, hr %#x.\n", hr);
-    ok(ddsd.dwWidth == fullscreen_rect.right - fullscreen_rect.left, "Expected surface width %u, got %u.\n",
-            fullscreen_rect.right - fullscreen_rect.left, ddsd.dwWidth);
-    ok(ddsd.dwHeight == fullscreen_rect.bottom - fullscreen_rect.top, "Expected surface height %u, got %u.\n",
-            fullscreen_rect.bottom - fullscreen_rect.top, ddsd.dwHeight);
+    ok(ddsd.dwWidth == registry_mode.dmPelsWidth, "Expected surface width %u, got %u.\n",
+            registry_mode.dmPelsWidth, ddsd.dwWidth);
+    ok(ddsd.dwHeight == registry_mode.dmPelsHeight, "Expected surface height %u, got %u.\n",
+            registry_mode.dmPelsHeight, ddsd.dwHeight);
 
     GetWindowRect(window, &r);
-    ok(EqualRect(&r, &fullscreen_rect), "Expected {%d, %d, %d, %d}, got {%d, %d, %d, %d}.\n",
-            fullscreen_rect.left, fullscreen_rect.top, fullscreen_rect.right, fullscreen_rect.bottom,
+    ok(EqualRect(&r, &registry_rect), "Expected {%d, %d, %d, %d}, got {%d, %d, %d, %d}.\n",
+            registry_rect.left, registry_rect.top, registry_rect.right, registry_rect.bottom,
             r.left, r.top, r.right, r.bottom);
 
     /* DDSCL_NORMAL | DDSCL_FULLSCREEN behaves the same as just DDSCL_NORMAL.
@@ -2780,16 +3004,16 @@ static void test_coop_level_mode_set(void)
     ok(SUCCEEDED(hr), "SetCooperativeLevel failed, hr %#x.\n", hr);
 
     GetWindowRect(window, &r);
-    ok(EqualRect(&r, &fullscreen_rect), "Expected {%d, %d, %d, %d}, got {%d, %d, %d, %d}.\n",
-            fullscreen_rect.left, fullscreen_rect.top, fullscreen_rect.right, fullscreen_rect.bottom,
+    ok(EqualRect(&r, &registry_rect), "Expected {%d, %d, %d, %d}, got {%d, %d, %d, %d}.\n",
+            registry_rect.left, registry_rect.top, registry_rect.right, registry_rect.bottom,
             r.left, r.top, r.right, r.bottom);
 
     hr = IDirectDrawSurface4_GetSurfaceDesc(primary, &ddsd);
     ok(SUCCEEDED(hr), "Failed to get surface desc, hr %#x.\n", hr);
-    ok(ddsd.dwWidth == fullscreen_rect.right - fullscreen_rect.left, "Expected surface width %u, got %u.\n",
-            fullscreen_rect.right - fullscreen_rect.left, ddsd.dwWidth);
-    ok(ddsd.dwHeight == fullscreen_rect.bottom - fullscreen_rect.top, "Expected surface height %u, got %u.\n",
-            fullscreen_rect.bottom - fullscreen_rect.top, ddsd.dwHeight);
+    ok(ddsd.dwWidth == registry_mode.dmPelsWidth, "Expected surface width %u, got %u.\n",
+            registry_mode.dmPelsWidth, ddsd.dwWidth);
+    ok(ddsd.dwHeight == registry_mode.dmPelsHeight, "Expected surface height %u, got %u.\n",
+            registry_mode.dmPelsHeight, ddsd.dwHeight);
     IDirectDrawSurface4_Release(primary);
 
     memset(&ddsd, 0, sizeof(ddsd));
@@ -2801,14 +3025,14 @@ static void test_coop_level_mode_set(void)
     ok(SUCCEEDED(hr), "Failed to create surface, hr %#x.\n",hr);
     hr = IDirectDrawSurface4_GetSurfaceDesc(primary, &ddsd);
     ok(SUCCEEDED(hr), "Failed to get surface desc, hr %#x.\n", hr);
-    ok(ddsd.dwWidth == fullscreen_rect.right - fullscreen_rect.left, "Expected surface width %u, got %u.\n",
-            fullscreen_rect.right - fullscreen_rect.left, ddsd.dwWidth);
-    ok(ddsd.dwHeight == fullscreen_rect.bottom - fullscreen_rect.top, "Expected surface height %u, got %u.\n",
-            fullscreen_rect.bottom - fullscreen_rect.top, ddsd.dwHeight);
+    ok(ddsd.dwWidth == registry_mode.dmPelsWidth, "Expected surface width %u, got %u.\n",
+            registry_mode.dmPelsWidth, ddsd.dwWidth);
+    ok(ddsd.dwHeight == registry_mode.dmPelsHeight, "Expected surface height %u, got %u.\n",
+            registry_mode.dmPelsHeight, ddsd.dwHeight);
 
     GetWindowRect(window, &r);
-    ok(EqualRect(&r, &fullscreen_rect), "Expected {%d, %d, %d, %d}, got {%d, %d, %d, %d}.\n",
-            fullscreen_rect.left, fullscreen_rect.top, fullscreen_rect.right, fullscreen_rect.bottom,
+    ok(EqualRect(&r, &registry_rect), "Expected {%d, %d, %d, %d}, got {%d, %d, %d, %d}.\n",
+            registry_rect.left, registry_rect.top, registry_rect.right, registry_rect.bottom,
             r.left, r.top, r.right, r.bottom);
 
     PeekMessageA(&msg, 0, 0, 0, PM_NOREMOVE);
@@ -2816,24 +3040,44 @@ static void test_coop_level_mode_set(void)
     screen_size.cx = 0;
     screen_size.cy = 0;
 
-    hr = set_display_mode(ddraw, 640, 480);
+    devmode.dmFields = DM_PELSWIDTH | DM_PELSHEIGHT;
+    devmode.dmPelsWidth = param.user32_width;
+    devmode.dmPelsHeight = param.user32_height;
+    change_ret = ChangeDisplaySettingsW(&devmode, CDS_FULLSCREEN);
+    ok(change_ret == DISP_CHANGE_SUCCESSFUL, "Failed to change display mode, ret %#x.\n", change_ret);
+
+    ok(!expect_messages->message, "Expected message %#x, but didn't receive it.\n", expect_messages->message);
+    expect_messages = NULL;
+    ok(!screen_size.cx && !screen_size.cy, "Got unexpected screen size %ux%u.\n", screen_size.cx, screen_size.cy);
+
+    GetWindowRect(window, &r);
+    ok(EqualRect(&r, &registry_rect), "Expected {%d, %d, %d, %d}, got {%d, %d, %d, %d}.\n",
+            registry_rect.left, registry_rect.top, registry_rect.right, registry_rect.bottom,
+            r.left, r.top, r.right, r.bottom);
+
+    PeekMessageA(&msg, 0, 0, 0, PM_NOREMOVE);
+    expect_messages = normal_messages;
+    screen_size.cx = 0;
+    screen_size.cy = 0;
+
+    hr = set_display_mode(ddraw, param.ddraw_width, param.ddraw_height);
     ok(SUCCEEDED(hr), "Failed to set display mode, hr %#x.\n", hr);
 
-    ok(!*expect_messages, "Expected message %#x, but didn't receive it.\n", *expect_messages);
+    ok(!expect_messages->message, "Expected message %#x, but didn't receive it.\n", expect_messages->message);
     expect_messages = NULL;
     ok(!screen_size.cx && !screen_size.cy, "Got unexpected screen size %ux%u.\n", screen_size.cx, screen_size.cy);
 
     GetWindowRect(window, &r);
-    ok(EqualRect(&r, &fullscreen_rect), "Expected {%d, %d, %d, %d}, got {%d, %d, %d, %d}.\n",
-            fullscreen_rect.left, fullscreen_rect.top, fullscreen_rect.right, fullscreen_rect.bottom,
+    ok(EqualRect(&r, &registry_rect), "Expected {%d, %d, %d, %d}, got {%d, %d, %d, %d}.\n",
+            registry_rect.left, registry_rect.top, registry_rect.right, registry_rect.bottom,
             r.left, r.top, r.right, r.bottom);
 
     hr = IDirectDrawSurface4_GetSurfaceDesc(primary, &ddsd);
     ok(SUCCEEDED(hr), "Failed to get surface desc, hr %#x.\n", hr);
-    ok(ddsd.dwWidth == fullscreen_rect.right - fullscreen_rect.left, "Expected surface width %u, got %u.\n",
-            fullscreen_rect.right - fullscreen_rect.left, ddsd.dwWidth);
-    ok(ddsd.dwHeight == fullscreen_rect.bottom - fullscreen_rect.top, "Expected surface height %u, got %u.\n",
-            fullscreen_rect.bottom - fullscreen_rect.top, ddsd.dwHeight);
+    ok(ddsd.dwWidth == registry_mode.dmPelsWidth, "Expected surface width %u, got %u.\n",
+            registry_mode.dmPelsWidth, ddsd.dwWidth);
+    ok(ddsd.dwHeight == registry_mode.dmPelsHeight, "Expected surface height %u, got %u.\n",
+            registry_mode.dmPelsHeight, ddsd.dwHeight);
     IDirectDrawSurface4_Release(primary);
 
     memset(&ddsd, 0, sizeof(ddsd));
@@ -2845,14 +3089,14 @@ static void test_coop_level_mode_set(void)
     ok(SUCCEEDED(hr), "Failed to create surface, hr %#x.\n",hr);
     hr = IDirectDrawSurface4_GetSurfaceDesc(primary, &ddsd);
     ok(SUCCEEDED(hr), "Failed to get surface desc, hr %#x.\n", hr);
-    ok(ddsd.dwWidth == s.right - s.left, "Expected surface width %u, got %u.\n",
-            s.right - s.left, ddsd.dwWidth);
-    ok(ddsd.dwHeight == s.bottom - s.top, "Expected surface height %u, got %u.\n",
-            s.bottom - s.top, ddsd.dwHeight);
+    ok(ddsd.dwWidth == param.ddraw_width, "Expected surface width %u, got %u.\n",
+            param.ddraw_width, ddsd.dwWidth);
+    ok(ddsd.dwHeight == param.ddraw_height, "Expected surface height %u, got %u.\n",
+            param.ddraw_height, ddsd.dwHeight);
 
     GetWindowRect(window, &r);
-    ok(EqualRect(&r, &fullscreen_rect), "Expected {%d, %d, %d, %d}, got {%d, %d, %d, %d}.\n",
-            fullscreen_rect.left, fullscreen_rect.top, fullscreen_rect.right, fullscreen_rect.bottom,
+    ok(EqualRect(&r, &registry_rect), "Expected {%d, %d, %d, %d}, got {%d, %d, %d, %d}.\n",
+            registry_rect.left, registry_rect.top, registry_rect.right, registry_rect.bottom,
             r.left, r.top, r.right, r.bottom);
 
     PeekMessageA(&msg, 0, 0, 0, PM_NOREMOVE);
@@ -2860,25 +3104,35 @@ static void test_coop_level_mode_set(void)
     screen_size.cx = 0;
     screen_size.cy = 0;
 
-    hr = IDirectDraw_RestoreDisplayMode(ddraw);
+    hr = IDirectDraw4_RestoreDisplayMode(ddraw);
     ok(SUCCEEDED(hr), "RestoreDisplayMode failed, hr %#x.\n", hr);
 
-    ok(!*expect_messages, "Expected message %#x, but didn't receive it.\n", *expect_messages);
+    ok(!expect_messages->message, "Expected message %#x, but didn't receive it.\n", expect_messages->message);
     expect_messages = NULL;
     ok(!screen_size.cx && !screen_size.cy, "Got unexpected screen size %ux%u.\n", screen_size.cx, screen_size.cy);
 
     GetWindowRect(window, &r);
-    ok(EqualRect(&r, &fullscreen_rect), "Expected {%d, %d, %d, %d}, got {%d, %d, %d, %d}.\n",
-            fullscreen_rect.left, fullscreen_rect.top, fullscreen_rect.right, fullscreen_rect.bottom,
+    ok(EqualRect(&r, &registry_rect), "Expected {%d, %d, %d, %d}, got {%d, %d, %d, %d}.\n",
+            registry_rect.left, registry_rect.top, registry_rect.right, registry_rect.bottom,
             r.left, r.top, r.right, r.bottom);
 
     hr = IDirectDrawSurface4_GetSurfaceDesc(primary, &ddsd);
     ok(SUCCEEDED(hr), "Failed to get surface desc, hr %#x.\n", hr);
-    ok(ddsd.dwWidth == s.right - s.left, "Expected surface width %u, got %u.\n",
-            s.right - s.left, ddsd.dwWidth);
-    ok(ddsd.dwHeight == s.bottom - s.top, "Expected surface height %u, got %u.\n",
-            s.bottom - s.top, ddsd.dwHeight);
+    ok(ddsd.dwWidth == param.ddraw_width, "Expected surface width %u, got %u.\n",
+            param.ddraw_width, ddsd.dwWidth);
+    ok(ddsd.dwHeight == param.ddraw_height, "Expected surface height %u, got %u.\n",
+            param.ddraw_height, ddsd.dwHeight);
     IDirectDrawSurface4_Release(primary);
+
+    ret = EnumDisplaySettingsW(NULL, ENUM_CURRENT_SETTINGS, &devmode);
+    ok(ret, "Failed to get display mode.\n");
+    ok(devmode.dmPelsWidth == registry_mode.dmPelsWidth
+            && devmode.dmPelsHeight == registry_mode.dmPelsHeight,
+            "Expected resolution %ux%u, got %ux%u.\n",
+            registry_mode.dmPelsWidth, registry_mode.dmPelsHeight,
+            devmode.dmPelsWidth, devmode.dmPelsHeight);
+    change_ret = ChangeDisplaySettingsW(NULL, CDS_FULLSCREEN);
+    ok(change_ret == DISP_CHANGE_SUCCESSFUL, "Failed to change display mode, ret %#x.\n", change_ret);
 
     memset(&ddsd, 0, sizeof(ddsd));
     ddsd.dwSize = sizeof(ddsd);
@@ -2889,21 +3143,21 @@ static void test_coop_level_mode_set(void)
     ok(SUCCEEDED(hr), "Failed to create surface, hr %#x.\n",hr);
     hr = IDirectDrawSurface4_GetSurfaceDesc(primary, &ddsd);
     ok(SUCCEEDED(hr), "Failed to get surface desc, hr %#x.\n", hr);
-    ok(ddsd.dwWidth == fullscreen_rect.right - fullscreen_rect.left, "Expected surface width %u, got %u.\n",
-            fullscreen_rect.right - fullscreen_rect.left, ddsd.dwWidth);
-    ok(ddsd.dwHeight == fullscreen_rect.bottom - fullscreen_rect.top, "Expected surface height %u, got %u.\n",
-            fullscreen_rect.bottom - fullscreen_rect.top, ddsd.dwHeight);
+    ok(ddsd.dwWidth == registry_mode.dmPelsWidth, "Expected surface width %u, got %u.\n",
+            registry_mode.dmPelsWidth, ddsd.dwWidth);
+    ok(ddsd.dwHeight == registry_mode.dmPelsHeight, "Expected surface height %u, got %u.\n",
+            registry_mode.dmPelsHeight, ddsd.dwHeight);
     IDirectDrawSurface4_Release(primary);
 
     GetWindowRect(window, &r);
-    ok(EqualRect(&r, &fullscreen_rect), "Expected {%d, %d, %d, %d}, got {%d, %d, %d, %d}.\n",
-            fullscreen_rect.left, fullscreen_rect.top, fullscreen_rect.right, fullscreen_rect.bottom,
+    ok(EqualRect(&r, &registry_rect), "Expected {%d, %d, %d, %d}, got {%d, %d, %d, %d}.\n",
+            registry_rect.left, registry_rect.top, registry_rect.right, registry_rect.bottom,
             r.left, r.top, r.right, r.bottom);
 
     /* Changing the coop level from EXCLUSIVE to NORMAL restores the screen resolution */
     hr = IDirectDraw4_SetCooperativeLevel(ddraw, window, DDSCL_EXCLUSIVE | DDSCL_FULLSCREEN);
     ok(SUCCEEDED(hr), "SetCooperativeLevel failed, hr %#x.\n", hr);
-    hr = set_display_mode(ddraw, 640, 480);
+    hr = set_display_mode(ddraw, param.ddraw_width, param.ddraw_height);
     ok(SUCCEEDED(hr), "Failed to set display mode, hr %#x.\n", hr);
 
     PeekMessageA(&msg, 0, 0, 0, PM_NOREMOVE);
@@ -2914,15 +3168,17 @@ static void test_coop_level_mode_set(void)
     hr = IDirectDraw4_SetCooperativeLevel(ddraw, window, DDSCL_NORMAL);
     ok(SUCCEEDED(hr), "SetCooperativeLevel failed, hr %#x.\n", hr);
 
-    ok(!*expect_messages, "Expected message %#x, but didn't receive it.\n", *expect_messages);
+    ok(!expect_messages->message, "Expected message %#x, but didn't receive it.\n", expect_messages->message);
     expect_messages = NULL;
-    ok(screen_size.cx == fullscreen_rect.right && screen_size.cy == fullscreen_rect.bottom,
+    ok(screen_size.cx == registry_mode.dmPelsWidth
+            && screen_size.cy == registry_mode.dmPelsHeight,
             "Expected screen size %ux%u, got %ux%u.\n",
-            fullscreen_rect.right, fullscreen_rect.bottom, screen_size.cx, screen_size.cy);
+            registry_mode.dmPelsWidth, registry_mode.dmPelsHeight,
+            screen_size.cx, screen_size.cy);
 
     GetWindowRect(window, &r);
-    ok(EqualRect(&r, &fullscreen_rect), "Expected {%d, %d, %d, %d}, got {%d, %d, %d, %d}.\n",
-            fullscreen_rect.left, fullscreen_rect.top, fullscreen_rect.right, fullscreen_rect.bottom,
+    ok(EqualRect(&r, &registry_rect), "Expected {%d, %d, %d, %d}, got {%d, %d, %d, %d}.\n",
+            registry_rect.left, registry_rect.top, registry_rect.right, registry_rect.bottom,
             r.left, r.top, r.right, r.bottom);
 
     memset(&ddsd, 0, sizeof(ddsd));
@@ -2932,18 +3188,18 @@ static void test_coop_level_mode_set(void)
 
     hr = IDirectDraw4_CreateSurface(ddraw, &ddsd, &primary, NULL);
     ok(SUCCEEDED(hr), "Failed to create surface, hr %#x.\n",hr);
-    hr = IDirectDrawSurface_GetSurfaceDesc(primary, &ddsd);
+    hr = IDirectDrawSurface4_GetSurfaceDesc(primary, &ddsd);
     ok(SUCCEEDED(hr), "Failed to get surface desc, hr %#x.\n", hr);
-    ok(ddsd.dwWidth == fullscreen_rect.right - fullscreen_rect.left, "Expected surface width %u, got %u.\n",
-            fullscreen_rect.right - fullscreen_rect.left, ddsd.dwWidth);
-    ok(ddsd.dwHeight == fullscreen_rect.bottom - fullscreen_rect.top, "Expected surface height %u, got %u.\n",
-            fullscreen_rect.bottom - fullscreen_rect.top, ddsd.dwHeight);
-    IDirectDrawSurface_Release(primary);
+    ok(ddsd.dwWidth == registry_mode.dmPelsWidth, "Expected surface width %u, got %u.\n",
+            registry_mode.dmPelsWidth, ddsd.dwWidth);
+    ok(ddsd.dwHeight == registry_mode.dmPelsHeight, "Expected surface height %u, got %u.\n",
+            registry_mode.dmPelsHeight, ddsd.dwHeight);
+    IDirectDrawSurface4_Release(primary);
 
     /* The screen restore is a property of DDSCL_EXCLUSIVE  */
     hr = IDirectDraw4_SetCooperativeLevel(ddraw, window, DDSCL_NORMAL | DDSCL_FULLSCREEN);
     ok(SUCCEEDED(hr), "SetCooperativeLevel failed, hr %#x.\n", hr);
-    hr = set_display_mode(ddraw, 640, 480);
+    hr = set_display_mode(ddraw, param.ddraw_width, param.ddraw_height);
     ok(SUCCEEDED(hr), "Failed to set display mode, hr %#x.\n", hr);
 
     hr = IDirectDraw4_SetCooperativeLevel(ddraw, window, DDSCL_NORMAL);
@@ -2956,21 +3212,21 @@ static void test_coop_level_mode_set(void)
 
     hr = IDirectDraw4_CreateSurface(ddraw, &ddsd, &primary, NULL);
     ok(SUCCEEDED(hr), "Failed to create surface, hr %#x.\n",hr);
-    hr = IDirectDrawSurface_GetSurfaceDesc(primary, &ddsd);
+    hr = IDirectDrawSurface4_GetSurfaceDesc(primary, &ddsd);
     ok(SUCCEEDED(hr), "Failed to get surface desc, hr %#x.\n", hr);
-    ok(ddsd.dwWidth == s.right - s.left, "Expected surface width %u, got %u.\n",
-            s.right - s.left, ddsd.dwWidth);
-    ok(ddsd.dwHeight == s.bottom - s.top, "Expected surface height %u, got %u.\n",
-            s.bottom - s.top, ddsd.dwHeight);
-    IDirectDrawSurface_Release(primary);
+    ok(ddsd.dwWidth == param.ddraw_width, "Expected surface width %u, got %u.\n",
+            param.ddraw_width, ddsd.dwWidth);
+    ok(ddsd.dwHeight == param.ddraw_height, "Expected surface height %u, got %u.\n",
+            param.ddraw_height, ddsd.dwHeight);
+    IDirectDrawSurface4_Release(primary);
 
-    hr = IDirectDraw_RestoreDisplayMode(ddraw);
+    hr = IDirectDraw4_RestoreDisplayMode(ddraw);
     ok(SUCCEEDED(hr), "RestoreDisplayMode failed, hr %#x.\n", hr);
 
     /* If the window is changed at the same time, messages are sent to the new window. */
     hr = IDirectDraw4_SetCooperativeLevel(ddraw, window, DDSCL_EXCLUSIVE | DDSCL_FULLSCREEN);
     ok(SUCCEEDED(hr), "SetCooperativeLevel failed, hr %#x.\n", hr);
-    hr = set_display_mode(ddraw, 640, 480);
+    hr = set_display_mode(ddraw, param.ddraw_width, param.ddraw_height);
     ok(SUCCEEDED(hr), "Failed to set display mode, hr %#x.\n", hr);
 
     PeekMessageA(&msg, 0, 0, 0, PM_NOREMOVE);
@@ -2983,21 +3239,21 @@ static void test_coop_level_mode_set(void)
     hr = IDirectDraw4_SetCooperativeLevel(ddraw, window2, DDSCL_NORMAL);
     ok(SUCCEEDED(hr), "SetCooperativeLevel failed, hr %#x.\n", hr);
 
-    ok(!*expect_messages, "Expected message %#x, but didn't receive it.\n", *expect_messages);
+    ok(!expect_messages->message, "Expected message %#x, but didn't receive it.\n", expect_messages->message);
     expect_messages = NULL;
     ok(!screen_size.cx && !screen_size.cy, "Got unexpected screen size %ux%u.\n",
             screen_size.cx, screen_size.cy);
-    ok(screen_size2.cx == fullscreen_rect.right && screen_size2.cy == fullscreen_rect.bottom,
+    ok(screen_size2.cx == registry_mode.dmPelsWidth && screen_size2.cy == registry_mode.dmPelsHeight,
             "Expected screen size 2 %ux%u, got %ux%u.\n",
-            fullscreen_rect.right, fullscreen_rect.bottom, screen_size2.cx, screen_size2.cy);
+            registry_mode.dmPelsWidth, registry_mode.dmPelsHeight, screen_size2.cx, screen_size2.cy);
 
     GetWindowRect(window, &r);
-    ok(EqualRect(&r, &s), "Expected {%d, %d, %d, %d}, got {%d, %d, %d, %d}.\n",
-            s.left, s.top, s.right, s.bottom,
+    ok(EqualRect(&r, &ddraw_rect), "Expected {%d, %d, %d, %d}, got {%d, %d, %d, %d}.\n",
+            ddraw_rect.left, ddraw_rect.top, ddraw_rect.right, ddraw_rect.bottom,
             r.left, r.top, r.right, r.bottom);
     GetWindowRect(window2, &r);
-    ok(EqualRect(&r, &fullscreen_rect), "Expected {%d, %d, %d, %d}, got {%d, %d, %d, %d}.\n",
-            fullscreen_rect.left, fullscreen_rect.top, fullscreen_rect.right, fullscreen_rect.bottom,
+    ok(EqualRect(&r, &registry_rect), "Expected {%d, %d, %d, %d}, got {%d, %d, %d, %d}.\n",
+            registry_rect.left, registry_rect.top, registry_rect.right, registry_rect.bottom,
             r.left, r.top, r.right, r.bottom);
 
     memset(&ddsd, 0, sizeof(ddsd));
@@ -3007,20 +3263,20 @@ static void test_coop_level_mode_set(void)
 
     hr = IDirectDraw4_CreateSurface(ddraw, &ddsd, &primary, NULL);
     ok(SUCCEEDED(hr), "Failed to create surface, hr %#x.\n",hr);
-    hr = IDirectDrawSurface_GetSurfaceDesc(primary, &ddsd);
+    hr = IDirectDrawSurface4_GetSurfaceDesc(primary, &ddsd);
     ok(SUCCEEDED(hr), "Failed to get surface desc, hr %#x.\n", hr);
-    ok(ddsd.dwWidth == fullscreen_rect.right - fullscreen_rect.left, "Expected surface width %u, got %u.\n",
-            fullscreen_rect.right - fullscreen_rect.left, ddsd.dwWidth);
-    ok(ddsd.dwHeight == fullscreen_rect.bottom - fullscreen_rect.top, "Expected surface height %u, got %u.\n",
-            fullscreen_rect.bottom - fullscreen_rect.top, ddsd.dwHeight);
-    IDirectDrawSurface_Release(primary);
+    ok(ddsd.dwWidth == registry_mode.dmPelsWidth, "Expected surface width %u, got %u.\n",
+            registry_mode.dmPelsWidth, ddsd.dwWidth);
+    ok(ddsd.dwHeight == registry_mode.dmPelsHeight, "Expected surface height %u, got %u.\n",
+            registry_mode.dmPelsHeight, ddsd.dwHeight);
+    IDirectDrawSurface4_Release(primary);
 
     ref = IDirectDraw4_Release(ddraw);
     ok(ref == 0, "The ddraw object was not properly freed: refcount %u.\n", ref);
 
     GetWindowRect(window, &r);
-    ok(EqualRect(&r, &s), "Expected {%d, %d, %d, %d}, got {%d, %d, %d, %d}.\n",
-            s.left, s.top, s.right, s.bottom,
+    ok(EqualRect(&r, &ddraw_rect), "Expected {%d, %d, %d, %d}, got {%d, %d, %d, %d}.\n",
+            ddraw_rect.left, ddraw_rect.top, ddraw_rect.right, ddraw_rect.bottom,
             r.left, r.top, r.right, r.bottom);
 
     expect_messages = NULL;
@@ -3033,7 +3289,7 @@ static void test_coop_level_mode_set(void)
 static void test_coop_level_mode_set_multi(void)
 {
     IDirectDraw4 *ddraw1, *ddraw2;
-    UINT orig_w, orig_h, w, h;
+    UINT w, h;
     HWND window;
     HRESULT hr;
     ULONG ref;
@@ -3042,9 +3298,6 @@ static void test_coop_level_mode_set_multi(void)
             0, 0, 100, 100, 0, 0, 0, 0);
     ddraw1 = create_ddraw();
     ok(!!ddraw1, "Failed to create a ddraw object.\n");
-
-    orig_w = GetSystemMetrics(SM_CXSCREEN);
-    orig_h = GetSystemMetrics(SM_CYSCREEN);
 
     /* With just a single ddraw object, the display mode is restored on
      * release. */
@@ -3058,9 +3311,9 @@ static void test_coop_level_mode_set_multi(void)
     ref = IDirectDraw4_Release(ddraw1);
     ok(ref == 0, "The ddraw object was not properly freed: refcount %u.\n", ref);
     w = GetSystemMetrics(SM_CXSCREEN);
-    ok(w == orig_w, "Got unexpected screen width %u.\n", w);
+    ok(w == registry_mode.dmPelsWidth, "Got unexpected screen width %u.\n", w);
     h = GetSystemMetrics(SM_CYSCREEN);
-    ok(h == orig_h, "Got unexpected screen height %u.\n", h);
+    ok(h == registry_mode.dmPelsHeight, "Got unexpected screen height %u.\n", h);
 
     /* When there are multiple ddraw objects, the display mode is restored to
      * the initial mode, before the first SetDisplayMode() call. */
@@ -3083,16 +3336,16 @@ static void test_coop_level_mode_set_multi(void)
     ref = IDirectDraw4_Release(ddraw2);
     ok(ref == 0, "The ddraw object was not properly freed: refcount %u.\n", ref);
     w = GetSystemMetrics(SM_CXSCREEN);
-    ok(w == orig_w, "Got unexpected screen width %u.\n", w);
+    ok(w == registry_mode.dmPelsWidth, "Got unexpected screen width %u.\n", w);
     h = GetSystemMetrics(SM_CYSCREEN);
-    ok(h == orig_h, "Got unexpected screen height %u.\n", h);
+    ok(h == registry_mode.dmPelsHeight, "Got unexpected screen height %u.\n", h);
 
     ref = IDirectDraw4_Release(ddraw1);
     ok(ref == 0, "The ddraw object was not properly freed: refcount %u.\n", ref);
     w = GetSystemMetrics(SM_CXSCREEN);
-    ok(w == orig_w, "Got unexpected screen width %u.\n", w);
+    ok(w == registry_mode.dmPelsWidth, "Got unexpected screen width %u.\n", w);
     h = GetSystemMetrics(SM_CYSCREEN);
-    ok(h == orig_h, "Got unexpected screen height %u.\n", h);
+    ok(h == registry_mode.dmPelsHeight, "Got unexpected screen height %u.\n", h);
 
     /* Regardless of release ordering. */
     ddraw1 = create_ddraw();
@@ -3114,16 +3367,16 @@ static void test_coop_level_mode_set_multi(void)
     ref = IDirectDraw4_Release(ddraw1);
     ok(ref == 0, "The ddraw object was not properly freed: refcount %u.\n", ref);
     w = GetSystemMetrics(SM_CXSCREEN);
-    ok(w == orig_w, "Got unexpected screen width %u.\n", w);
+    ok(w == registry_mode.dmPelsWidth, "Got unexpected screen width %u.\n", w);
     h = GetSystemMetrics(SM_CYSCREEN);
-    ok(h == orig_h, "Got unexpected screen height %u.\n", h);
+    ok(h == registry_mode.dmPelsHeight, "Got unexpected screen height %u.\n", h);
 
     ref = IDirectDraw4_Release(ddraw2);
     ok(ref == 0, "The ddraw object was not properly freed: refcount %u.\n", ref);
     w = GetSystemMetrics(SM_CXSCREEN);
-    ok(w == orig_w, "Got unexpected screen width %u.\n", w);
+    ok(w == registry_mode.dmPelsWidth, "Got unexpected screen width %u.\n", w);
     h = GetSystemMetrics(SM_CYSCREEN);
-    ok(h == orig_h, "Got unexpected screen height %u.\n", h);
+    ok(h == registry_mode.dmPelsHeight, "Got unexpected screen height %u.\n", h);
 
     /* But only for ddraw objects that called SetDisplayMode(). */
     ddraw1 = create_ddraw();
@@ -3145,9 +3398,9 @@ static void test_coop_level_mode_set_multi(void)
     ref = IDirectDraw4_Release(ddraw2);
     ok(ref == 0, "The ddraw object was not properly freed: refcount %u.\n", ref);
     w = GetSystemMetrics(SM_CXSCREEN);
-    ok(w == orig_w, "Got unexpected screen width %u.\n", w);
+    ok(w == registry_mode.dmPelsWidth, "Got unexpected screen width %u.\n", w);
     h = GetSystemMetrics(SM_CYSCREEN);
-    ok(h == orig_h, "Got unexpected screen height %u.\n", h);
+    ok(h == registry_mode.dmPelsHeight, "Got unexpected screen height %u.\n", h);
 
     /* If there's a ddraw object that's currently in exclusive mode, it blocks
      * restoring the display mode. */
@@ -3180,9 +3433,9 @@ static void test_coop_level_mode_set_multi(void)
     ref = IDirectDraw4_Release(ddraw2);
     ok(ref == 0, "The ddraw object was not properly freed: refcount %u.\n", ref);
     w = GetSystemMetrics(SM_CXSCREEN);
-    ok(w == orig_w, "Got unexpected screen width %u.\n", w);
+    ok(w == registry_mode.dmPelsWidth, "Got unexpected screen width %u.\n", w);
     h = GetSystemMetrics(SM_CYSCREEN);
-    ok(h == orig_h, "Got unexpected screen height %u.\n", h);
+    ok(h == registry_mode.dmPelsHeight, "Got unexpected screen height %u.\n", h);
 
     /* Exclusive mode blocks mode setting on other ddraw objects in general. */
     ddraw1 = create_ddraw();
@@ -3203,16 +3456,16 @@ static void test_coop_level_mode_set_multi(void)
     ref = IDirectDraw4_Release(ddraw1);
     ok(ref == 0, "The ddraw object was not properly freed: refcount %u.\n", ref);
     w = GetSystemMetrics(SM_CXSCREEN);
-    ok(w == orig_w, "Got unexpected screen width %u.\n", w);
+    ok(w == registry_mode.dmPelsWidth, "Got unexpected screen width %u.\n", w);
     h = GetSystemMetrics(SM_CYSCREEN);
-    ok(h == orig_h, "Got unexpected screen height %u.\n", h);
+    ok(h == registry_mode.dmPelsHeight, "Got unexpected screen height %u.\n", h);
 
     ref = IDirectDraw4_Release(ddraw2);
     ok(ref == 0, "The ddraw object was not properly freed: refcount %u.\n", ref);
     w = GetSystemMetrics(SM_CXSCREEN);
-    ok(w == orig_w, "Got unexpected screen width %u.\n", w);
+    ok(w == registry_mode.dmPelsWidth, "Got unexpected screen width %u.\n", w);
     h = GetSystemMetrics(SM_CYSCREEN);
-    ok(h == orig_h, "Got unexpected screen height %u.\n", h);
+    ok(h == registry_mode.dmPelsHeight, "Got unexpected screen height %u.\n", h);
 
     DestroyWindow(window);
 }
@@ -6075,8 +6328,8 @@ static void test_surface_attachment(void)
     surface_desc.dwSize = sizeof(surface_desc);
     surface_desc.dwFlags = DDSD_CAPS | DDSD_WIDTH | DDSD_HEIGHT;
     surface_desc.ddsCaps.dwCaps = DDSCAPS_OFFSCREENPLAIN;
-    surface_desc.dwWidth = GetSystemMetrics(SM_CXSCREEN);
-    surface_desc.dwHeight = GetSystemMetrics(SM_CYSCREEN);
+    surface_desc.dwWidth = registry_mode.dmPelsWidth;
+    surface_desc.dwHeight = registry_mode.dmPelsHeight;
     hr = IDirectDraw4_CreateSurface(ddraw, &surface_desc, &surface2, NULL);
     ok(SUCCEEDED(hr), "Failed to create surface, hr %#x.\n", hr);
 
@@ -6084,8 +6337,8 @@ static void test_surface_attachment(void)
     surface_desc.dwSize = sizeof(surface_desc);
     surface_desc.dwFlags = DDSD_CAPS | DDSD_WIDTH | DDSD_HEIGHT;
     surface_desc.ddsCaps.dwCaps = DDSCAPS_OFFSCREENPLAIN;
-    surface_desc.dwWidth = GetSystemMetrics(SM_CXSCREEN);
-    surface_desc.dwHeight = GetSystemMetrics(SM_CYSCREEN);
+    surface_desc.dwWidth = registry_mode.dmPelsWidth;
+    surface_desc.dwHeight = registry_mode.dmPelsHeight;
     hr = IDirectDraw4_CreateSurface(ddraw, &surface_desc, &surface3, NULL);
     ok(SUCCEEDED(hr), "Failed to create surface, hr %#x.\n", hr);
 
@@ -7786,6 +8039,7 @@ static void test_surface_desc_lock(void)
 START_TEST(ddraw4)
 {
     IDirectDraw4 *ddraw;
+    DEVMODEW current_mode;
 
     if (!(ddraw = create_ddraw()))
     {
@@ -7793,6 +8047,18 @@ START_TEST(ddraw4)
         return;
     }
     IDirectDraw4_Release(ddraw);
+
+    memset(&current_mode, 0, sizeof(current_mode));
+    current_mode.dmSize = sizeof(current_mode);
+    ok(EnumDisplaySettingsW(NULL, ENUM_CURRENT_SETTINGS, &current_mode), "Failed to get display mode.\n");
+    registry_mode.dmSize = sizeof(registry_mode);
+    ok(EnumDisplaySettingsW(NULL, ENUM_REGISTRY_SETTINGS, &registry_mode), "Failed to get display mode.\n");
+    if (registry_mode.dmPelsWidth != current_mode.dmPelsWidth
+            || registry_mode.dmPelsHeight != current_mode.dmPelsHeight)
+    {
+        skip("Current mode does not match registry mode, skipping test.\n");
+        return;
+    }
 
     test_process_vertices();
     test_coop_level_create_device_window();

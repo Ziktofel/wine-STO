@@ -41,10 +41,9 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD reason, LPVOID reserved)
 {
     switch (reason)
     {
-    case DLL_WINE_PREATTACH:
-        return FALSE;  /* prefer native version */
     case DLL_PROCESS_ATTACH:
         DisableThreadLibraryCalls( hinstDLL );
+        init_freetype();
         break;
     case DLL_PROCESS_DETACH:
         if (reserved) break;
@@ -256,22 +255,57 @@ static HRESULT WINAPI localizedstrings_FindLocaleName(IDWriteLocalizedStrings *i
     WCHAR const *locale_name, UINT32 *index, BOOL *exists)
 {
     struct localizedstrings *This = impl_from_IDWriteLocalizedStrings(iface);
-    FIXME("(%p)->(%s %p %p): stub\n", This, debugstr_w(locale_name), index, exists);
-    return E_NOTIMPL;
+    UINT32 i;
+
+    TRACE("(%p)->(%s %p %p)\n", This, debugstr_w(locale_name), index, exists);
+
+    *exists = FALSE;
+    *index = ~0;
+
+    for (i = 0; i < This->count; i++) {
+        if (!strcmpiW(This->data[i].locale, locale_name)) {
+            *exists = TRUE;
+            *index = i;
+            break;
+        }
+    }
+
+    return S_OK;
 }
 
 static HRESULT WINAPI localizedstrings_GetLocaleNameLength(IDWriteLocalizedStrings *iface, UINT32 index, UINT32 *length)
 {
     struct localizedstrings *This = impl_from_IDWriteLocalizedStrings(iface);
-    FIXME("(%p)->(%u %p): stub\n", This, index, length);
-    return E_NOTIMPL;
+
+    TRACE("(%p)->(%u %p)\n", This, index, length);
+
+    if (index >= This->count) {
+        *length = (UINT32)-1;
+        return E_FAIL;
+    }
+
+    *length = strlenW(This->data[index].locale);
+    return S_OK;
 }
 
-static HRESULT WINAPI localizedstrings_GetLocaleName(IDWriteLocalizedStrings *iface, UINT32 index, WCHAR *locale_name, UINT32 size)
+static HRESULT WINAPI localizedstrings_GetLocaleName(IDWriteLocalizedStrings *iface, UINT32 index, WCHAR *buffer, UINT32 size)
 {
     struct localizedstrings *This = impl_from_IDWriteLocalizedStrings(iface);
-    FIXME("(%p)->(%u %p %u): stub\n", This, index, locale_name, size);
-    return E_NOTIMPL;
+
+    TRACE("(%p)->(%u %p %u)\n", This, index, buffer, size);
+
+    if (index >= This->count) {
+        if (buffer) *buffer = 0;
+        return E_FAIL;
+    }
+
+    if (size < strlenW(This->data[index].locale)+1) {
+        if (buffer) *buffer = 0;
+        return E_NOT_SUFFICIENT_BUFFER;
+    }
+
+    strcpyW(buffer, This->data[index].locale);
+    return S_OK;
 }
 
 static HRESULT WINAPI localizedstrings_GetStringLength(IDWriteLocalizedStrings *iface, UINT32 index, UINT32 *length)
@@ -596,7 +630,7 @@ static HRESULT WINAPI dwritefactory_CreateCustomFontCollection(IDWriteFactory *i
     if (FAILED(hr))
         return hr;
 
-    hr = create_font_collection(iface, enumerator, collection);
+    hr = create_font_collection(iface, enumerator, FALSE, collection);
     IDWriteFontFileEnumerator_Release(enumerator);
     return hr;
 }
@@ -651,8 +685,11 @@ static HRESULT WINAPI dwritefactory_UnregisterFontCollectionLoader(IDWriteFactor
 static HRESULT WINAPI dwritefactory_CreateFontFileReference(IDWriteFactory *iface,
     WCHAR const *path, FILETIME const *writetime, IDWriteFontFile **font_file)
 {
-    HRESULT hr;
     struct dwritefactory *This = impl_from_IDWriteFactory(iface);
+    UINT32 key_size;
+    HRESULT hr;
+    void *key;
+
     TRACE("(%p)->(%s %p %p)\n", This, debugstr_w(path), writetime, font_file);
 
     if (!This->localfontfileloader)
@@ -661,7 +698,16 @@ static HRESULT WINAPI dwritefactory_CreateFontFileReference(IDWriteFactory *ifac
         if (FAILED(hr))
             return hr;
     }
-    return create_font_file((IDWriteFontFileLoader*)This->localfontfileloader, path, sizeof(WCHAR) * (strlenW(path)+1), font_file);
+
+    /* get a reference key used by local loader */
+    hr = get_local_refkey(path, writetime, &key, &key_size);
+    if (FAILED(hr))
+        return hr;
+
+    hr = create_font_file((IDWriteFontFileLoader*)This->localfontfileloader, key, key_size, font_file);
+    heap_free(key);
+
+    return hr;
 }
 
 static HRESULT WINAPI dwritefactory_CreateCustomFontFileReference(IDWriteFactory *iface,
@@ -1021,9 +1067,9 @@ static const struct IDWriteFactoryVtbl shareddwritefactoryvtbl = {
     dwritefactory_CreateGlyphRunAnalysis
 };
 
-static void init_dwritefactory(struct dwritefactory *factory, const struct IDWriteFactoryVtbl *vtbl)
+static void init_dwritefactory(struct dwritefactory *factory, DWRITE_FACTORY_TYPE type)
 {
-    factory->IDWriteFactory_iface.lpVtbl = vtbl;
+    factory->IDWriteFactory_iface.lpVtbl = type == DWRITE_FACTORY_TYPE_SHARED ? &shareddwritefactoryvtbl : &dwritefactoryvtbl;
     factory->ref = 1;
     factory->localfontfileloader = NULL;
     factory->system_collection = NULL;
@@ -1053,7 +1099,7 @@ HRESULT WINAPI DWriteCreateFactory(DWRITE_FACTORY_TYPE type, REFIID riid, IUnkno
     factory = heap_alloc(sizeof(struct dwritefactory));
     if (!factory) return E_OUTOFMEMORY;
 
-    init_dwritefactory(factory, type == DWRITE_FACTORY_TYPE_SHARED ? &shareddwritefactoryvtbl : &dwritefactoryvtbl);
+    init_dwritefactory(factory, type);
 
     if (type == DWRITE_FACTORY_TYPE_SHARED)
         if (InterlockedCompareExchangePointer((void**)&shared_factory, factory, NULL)) {

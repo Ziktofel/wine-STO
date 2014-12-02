@@ -46,8 +46,7 @@ struct device_desc
 #define GET_X_LPARAM(lp) ((int)(short)LOWORD(lp))
 #define GET_Y_LPARAM(lp) ((int)(short)HIWORD(lp))
 
-static INT screen_width;
-static INT screen_height;
+static DEVMODEW registry_mode;
 
 static HRESULT (WINAPI *ValidateVertexShader)(DWORD *, DWORD *, DWORD *, int, DWORD *);
 static HRESULT (WINAPI *ValidatePixelShader)(DWORD *, DWORD *, int, DWORD *);
@@ -137,18 +136,26 @@ static IDirect3DDevice8 *create_device(IDirect3D8 *d3d8, HWND focus_window, cons
     return NULL;
 }
 
-static HRESULT reset_device(IDirect3DDevice8 *device, HWND device_window, BOOL windowed)
+static HRESULT reset_device(IDirect3DDevice8 *device, const struct device_desc *desc)
 {
     D3DPRESENT_PARAMETERS present_parameters = {0};
 
-    present_parameters.Windowed = windowed;
-    present_parameters.hDeviceWindow = device_window;
-    present_parameters.SwapEffect = D3DSWAPEFFECT_DISCARD;
-    present_parameters.BackBufferWidth = screen_width;
-    present_parameters.BackBufferHeight = screen_height;
+    present_parameters.BackBufferWidth = 640;
+    present_parameters.BackBufferHeight = 480;
     present_parameters.BackBufferFormat = D3DFMT_A8R8G8B8;
+    present_parameters.SwapEffect = D3DSWAPEFFECT_DISCARD;
+    present_parameters.hDeviceWindow = NULL;
+    present_parameters.Windowed = TRUE;
     present_parameters.EnableAutoDepthStencil = TRUE;
     present_parameters.AutoDepthStencilFormat = D3DFMT_D24S8;
+
+    if (desc)
+    {
+        present_parameters.BackBufferWidth = desc->width;
+        present_parameters.BackBufferHeight = desc->height;
+        present_parameters.hDeviceWindow = desc->device_window;
+        present_parameters.Windowed = !(desc->flags & CREATE_DEVICE_FULLSCREEN);
+    }
 
     return IDirect3DDevice8_Reset(device, &present_parameters);
 }
@@ -255,12 +262,16 @@ static void test_swapchain(void)
     IDirect3DDevice8 *device;
     IDirect3D8 *d3d;
     ULONG refcount;
-    HWND window;
+    HWND window, window2;
     HRESULT hr;
+    struct device_desc device_desc;
 
     window = CreateWindowA("d3d8_test_wc", "d3d8_test", WS_OVERLAPPEDWINDOW,
             0, 0, 640, 480, NULL, NULL, NULL, NULL);
     ok(!!window, "Failed to create a window.\n");
+    window2 = CreateWindowA("d3d8_test_wc", "d3d8_test", WS_OVERLAPPEDWINDOW,
+            0, 0, 640, 480, NULL, NULL, NULL, NULL);
+    ok(!!window2, "Failed to create a window.\n");
     d3d = Direct3DCreate8(D3D_SDK_VERSION);
     ok(!!d3d, "Failed to create a D3D object.\n");
     if (!(device = create_device(d3d, window, NULL)))
@@ -349,10 +360,42 @@ static void test_swapchain(void)
     IDirect3DSwapChain8_Release(swapchain3);
     IDirect3DSwapChain8_Release(swapchain2);
     IDirect3DSwapChain8_Release(swapchain1);
+
+    d3dpp.Windowed = FALSE;
+    d3dpp.hDeviceWindow = window;
+    d3dpp.BackBufferCount = 1;
+    hr = IDirect3DDevice8_CreateAdditionalSwapChain(device, &d3dpp, &swapchain1);
+    ok(hr == D3DERR_INVALIDCALL, "Got unexpected hr %#x\n", hr);
+    d3dpp.hDeviceWindow = window2;
+    hr = IDirect3DDevice8_CreateAdditionalSwapChain(device, &d3dpp, &swapchain1);
+    ok(hr == D3DERR_INVALIDCALL, "Got unexpected hr %#x\n", hr);
+
+    device_desc.width = registry_mode.dmPelsWidth;
+    device_desc.height = registry_mode.dmPelsHeight;
+    device_desc.device_window = window;
+    device_desc.flags = CREATE_DEVICE_FULLSCREEN;
+    hr = reset_device(device, &device_desc);
+    ok(SUCCEEDED(hr), "Failed to reset device, hr %#x.\n", hr);
+
+    d3dpp.hDeviceWindow = window;
+    hr = IDirect3DDevice8_CreateAdditionalSwapChain(device, &d3dpp, &swapchain1);
+    ok(hr == D3DERR_INVALIDCALL, "Got unexpected hr %#x\n", hr);
+    d3dpp.hDeviceWindow = window2;
+    hr = IDirect3DDevice8_CreateAdditionalSwapChain(device, &d3dpp, &swapchain1);
+    ok(hr == D3DERR_INVALIDCALL, "Got unexpected hr %#x\n", hr);
+    d3dpp.Windowed = TRUE;
+    d3dpp.hDeviceWindow = window;
+    hr = IDirect3DDevice8_CreateAdditionalSwapChain(device, &d3dpp, &swapchain1);
+    ok(hr == D3DERR_INVALIDCALL, "Got unexpected hr %#x\n", hr);
+    d3dpp.hDeviceWindow = window2;
+    hr = IDirect3DDevice8_CreateAdditionalSwapChain(device, &d3dpp, &swapchain1);
+    ok(hr == D3DERR_INVALIDCALL, "Got unexpected hr %#x\n", hr);
+
     refcount = IDirect3DDevice8_Release(device);
     ok(!refcount, "Device has %u references left.\n", refcount);
 cleanup:
     IDirect3D8_Release(d3d);
+    DestroyWindow(window2);
     DestroyWindow(window);
 }
 
@@ -716,6 +759,7 @@ static void test_cursor(void)
     HCURSOR cur;
     HWND window;
     HRESULT hr;
+    BOOL ret;
 
     pGetCursorInfo = (void *)GetProcAddress(user32_handle, "GetCursorInfo");
     if (!pGetCursorInfo)
@@ -724,14 +768,19 @@ static void test_cursor(void)
         return;
     }
 
+    window = CreateWindowA("d3d8_test_wc", "d3d8_test", WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+            0, 0, 640, 480, NULL, NULL, NULL, NULL);
+    ok(!!window, "Failed to create a window.\n");
+
+    ret = SetCursorPos(50, 50);
+    ok(ret, "Failed to set cursor position.\n");
+    flush_events();
+
     memset(&info, 0, sizeof(info));
     info.cbSize = sizeof(info);
     ok(pGetCursorInfo(&info), "GetCursorInfo failed\n");
     cur = info.hCursor;
 
-    window = CreateWindowA("d3d8_test_wc", "d3d8_test", WS_OVERLAPPEDWINDOW,
-            0, 0, 640, 480, NULL, NULL, NULL, NULL);
-    ok(!!window, "Failed to create a window.\n");
     d3d = Direct3DCreate8(D3D_SDK_VERSION);
     ok(!!d3d, "Failed to create a D3D object.\n");
     if (!(device = create_device(d3d, window, NULL)))
@@ -774,12 +823,11 @@ static void test_cursor(void)
     hr = IDirect3DDevice8_ShowCursor(device, TRUE);
     ok(hr == TRUE, "IDirect3DDevice8_ShowCursor returned %#08x\n", hr);
 
-    /* GDI cursor unchanged */
     memset(&info, 0, sizeof(info));
     info.cbSize = sizeof(info);
     ok(pGetCursorInfo(&info), "GetCursorInfo failed\n");
     ok(info.flags & CURSOR_SHOWING, "The gdi cursor is hidden (%08x)\n", info.flags);
-    ok(info.hCursor == cur, "The cursor handle is %p\n", info.hCursor); /* unchanged */
+    ok(info.hCursor != cur, "The cursor handle is %p\n", info.hCursor);
 
     refcount = IDirect3DDevice8_Release(device);
     ok(!refcount, "Device has %u references left.\n", refcount);
@@ -2129,9 +2177,11 @@ struct message
 {
     UINT message;
     enum message_window window;
+    BOOL check_wparam;
+    WPARAM expect_wparam;
 };
 
-static const struct message *expect_messages;
+static const struct message *expect_messages, *unexpected_messages;
 static HWND device_window, focus_window;
 
 struct wndproc_thread_param
@@ -2169,7 +2219,22 @@ static LRESULT CALLBACK test_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM
                 break;
         };
 
-        if (hwnd == w && expect_messages->message == message) ++expect_messages;
+        if (hwnd == w && expect_messages->message == message)
+        {
+            if (expect_messages->check_wparam)
+                ok(wparam == expect_messages->expect_wparam,
+                        "Got unexpected wparam %lx for message %x, expected %lx.\n",
+                        wparam, message, expect_messages->expect_wparam);
+
+            ++expect_messages;
+        }
+    }
+
+    if (unexpected_messages)
+    {
+        const struct message *i;
+        for (i = unexpected_messages; i->message; i++)
+            ok(i->message != message, "Got unexpected message %x on window %p.\n", message, hwnd);
     }
 
     return DefWindowProcA(hwnd, message, wparam, lparam);
@@ -2182,7 +2247,8 @@ static DWORD WINAPI wndproc_thread(void *param)
     BOOL ret;
 
     p->dummy_window = CreateWindowA("d3d8_test_wndproc_wc", "d3d8_test",
-            WS_MAXIMIZE | WS_VISIBLE | WS_CAPTION, 0, 0, screen_width, screen_height, 0, 0, 0, 0);
+            WS_MAXIMIZE | WS_VISIBLE | WS_CAPTION, 0, 0, registry_mode.dmPelsWidth,
+            registry_mode.dmPelsHeight, 0, 0, 0, 0);
     p->running_in_foreground = SetForegroundWindow(p->dummy_window);
 
     ret = SetEvent(p->window_created);
@@ -2219,20 +2285,128 @@ static void test_wndproc(void)
     ULONG ref;
     DWORD res, tid;
     HWND tmp;
+    UINT i, adapter_mode_count;
+    HRESULT hr;
+    D3DDISPLAYMODE d3ddm;
+    DWORD d3d_width = 0, d3d_height = 0, user32_width = 0, user32_height = 0;
+    DEVMODEW devmode;
+    LONG change_ret;
+    BOOL ret;
 
-    static const struct message messages[] =
+    static const struct message create_messages[] =
     {
-        {WM_WINDOWPOSCHANGING,  FOCUS_WINDOW},
-        {WM_ACTIVATE,           FOCUS_WINDOW},
-        {WM_SETFOCUS,           FOCUS_WINDOW},
-        {WM_WINDOWPOSCHANGING,  DEVICE_WINDOW},
-        {WM_MOVE,               DEVICE_WINDOW},
-        {WM_SIZE,               DEVICE_WINDOW},
-        {0,                     0},
+        {WM_WINDOWPOSCHANGING,  FOCUS_WINDOW,   FALSE,  0},
+        /* Do not test wparam here. If device creation succeeds,
+         * wparam is WA_ACTIVE. If device creation fails (testbot)
+         * wparam is set to WA_INACTIVE on some Windows versions. */
+        {WM_ACTIVATE,           FOCUS_WINDOW,   FALSE,  0},
+        {WM_SETFOCUS,           FOCUS_WINDOW,   FALSE,  0},
+        {WM_WINDOWPOSCHANGING,  DEVICE_WINDOW,  FALSE,  0},
+        {WM_MOVE,               DEVICE_WINDOW,  FALSE,  0},
+        {WM_SIZE,               DEVICE_WINDOW,  FALSE,  0},
+        {0,                     0,              FALSE,  0},
+    };
+    static const struct message focus_loss_messages[] =
+    {
+        /* WM_ACTIVATE (wparam = WA_INACTIVE) is sent on Windows. It is
+         * not reliable on X11 WMs. When the window focus follows the
+         * mouse pointer the message is not sent.
+         * {WM_ACTIVATE,           FOCUS_WINDOW,   TRUE,   WA_INACTIVE}, */
+        {WM_DISPLAYCHANGE,      DEVICE_WINDOW,  FALSE,  0},
+        /* WM_DISPLAYCHANGE is sent to the focus window too, but the order is
+         * not deterministic. */
+        {WM_WINDOWPOSCHANGING,  DEVICE_WINDOW,  FALSE,  0},
+        /* Windows sends WM_ACTIVATE to the device window, indicating that
+         * SW_SHOWMINIMIZED is used instead of SW_MINIMIZE. Yet afterwards
+         * the foreground and focus window are NULL. On Wine SW_SHOWMINIMIZED
+         * leaves the device window active, breaking re-activation in the
+         * lost device test.
+         * {WM_ACTIVATE,           DEVICE_WINDOW,  TRUE,   0x200000 | WA_ACTIVE}, */
+        {WM_WINDOWPOSCHANGED,   DEVICE_WINDOW,  FALSE,  0},
+        {WM_SIZE,               DEVICE_WINDOW,  TRUE,   SIZE_MINIMIZED},
+        {WM_ACTIVATEAPP,        FOCUS_WINDOW,   TRUE,   FALSE},
+        /* WM_ACTIVATEAPP is sent to the device window too, but the order is
+         * not deterministic. It may be sent after the focus window handling
+         * or before. */
+        {0,                     0,              FALSE,  0},
+    };
+    static const struct message reactivate_messages[] =
+    {
+        {WM_WINDOWPOSCHANGING,  DEVICE_WINDOW,  FALSE,  0},
+        {WM_WINDOWPOSCHANGED,   DEVICE_WINDOW,  FALSE,  0},
+        {WM_MOVE,               DEVICE_WINDOW,  FALSE,  0},
+        {WM_ACTIVATEAPP,        FOCUS_WINDOW,   TRUE,   TRUE},
+        {0,                     0,              FALSE,  0},
+    };
+    static const struct message focus_loss_messages_hidden[] =
+    {
+        {WM_DISPLAYCHANGE,      DEVICE_WINDOW,  FALSE,  0},
+        {WM_ACTIVATEAPP,        FOCUS_WINDOW,   TRUE,   FALSE},
+        {0,                     0,              FALSE,  0},
+    };
+    static const struct message focus_loss_messages_hidden_unexpected[] =
+    {
+        /* KDE randomly does something with the hidden window during the
+         * mode change that sometimes generates a WM_WINDOWPOSCHANGING
+         * message. A WM_WINDOWPOSCHANGED message is not generated, so
+         * just flag WM_WINDOWPOSCHANGED as bad. */
+        {WM_WINDOWPOSCHANGED,   0,              FALSE,  0},
+        {0,                     0,              FALSE,  0},
     };
 
     d3d8 = Direct3DCreate8(D3D_SDK_VERSION);
     ok(!!d3d8, "Failed to create a D3D object.\n");
+
+    adapter_mode_count = IDirect3D8_GetAdapterModeCount(d3d8, D3DADAPTER_DEFAULT);
+    for (i = 0; i < adapter_mode_count; ++i)
+    {
+        hr = IDirect3D8_EnumAdapterModes(d3d8, D3DADAPTER_DEFAULT, i, &d3ddm);
+        ok(SUCCEEDED(hr), "Failed to enumerate display mode, hr %#x.\n", hr);
+
+        if (d3ddm.Format != D3DFMT_X8R8G8B8)
+            continue;
+        if (d3ddm.Width == registry_mode.dmPelsWidth && d3ddm.Height == registry_mode.dmPelsHeight)
+            continue;
+        /* The r200 driver on Windows XP enumerates modes like 320x200 and 320x240 but
+         * refuses to create a device at these sizes. */
+        if (d3ddm.Width < 640 || d3ddm.Height < 480)
+            continue;
+
+        if (!user32_width)
+        {
+            user32_width = d3ddm.Width;
+            user32_height = d3ddm.Height;
+            continue;
+        }
+
+        /* Make sure the d3d mode is smaller in width or height and at most
+         * equal in the other dimension than the mode passed to
+         * ChangeDisplaySettings. Otherwise Windows shrinks the window to
+         * the ChangeDisplaySettings parameters + 12. */
+        if (d3ddm.Width == user32_width && d3ddm.Height == user32_height)
+            continue;
+        if (d3ddm.Width <= user32_width && d3ddm.Height <= user32_height)
+        {
+            d3d_width = d3ddm.Width;
+            d3d_height = d3ddm.Height;
+            break;
+        }
+        if (user32_width <= d3ddm.Width && user32_height <= d3ddm.Height)
+        {
+            d3d_width = user32_width;
+            d3d_height = user32_height;
+            user32_width = d3ddm.Width;
+            user32_height = d3ddm.Height;
+            break;
+        }
+    }
+
+    if (!d3d_width)
+    {
+        skip("Could not find adequate modes, skipping mode tests.\n");
+        IDirect3D8_Release(d3d8);
+        return;
+    }
 
     wc.lpfnWndProc = test_proc;
     wc.lpszClassName = "d3d8_test_wndproc_wc";
@@ -2243,10 +2417,18 @@ static void test_wndproc(void)
     thread_params.test_finished = CreateEventA(NULL, FALSE, FALSE, NULL);
     ok(!!thread_params.test_finished, "CreateEvent failed, last error %#x.\n", GetLastError());
 
+    memset(&devmode, 0, sizeof(devmode));
+    devmode.dmSize = sizeof(devmode);
+    devmode.dmFields = DM_PELSWIDTH | DM_PELSHEIGHT;
+    devmode.dmPelsWidth = user32_width;
+    devmode.dmPelsHeight = user32_height;
+    change_ret = ChangeDisplaySettingsW(&devmode, CDS_FULLSCREEN);
+    ok(change_ret == DISP_CHANGE_SUCCESSFUL, "Failed to change display mode, ret %#x.\n", change_ret);
+
     focus_window = CreateWindowA("d3d8_test_wndproc_wc", "d3d8_test",
-            WS_MAXIMIZE | WS_VISIBLE | WS_CAPTION , 0, 0, screen_width, screen_height, 0, 0, 0, 0);
+            WS_MAXIMIZE | WS_VISIBLE | WS_CAPTION , 0, 0, user32_width, user32_height, 0, 0, 0, 0);
     device_window = CreateWindowA("d3d8_test_wndproc_wc", "d3d8_test",
-            WS_MAXIMIZE | WS_VISIBLE | WS_CAPTION , 0, 0, screen_width, screen_height, 0, 0, 0, 0);
+            WS_MAXIMIZE | WS_VISIBLE | WS_CAPTION , 0, 0, user32_width, user32_height, 0, 0, 0, 0);
     thread = CreateThread(NULL, 0, wndproc_thread, &thread_params, 0, &tid);
     ok(!!thread, "Failed to create thread, last error %#x.\n", GetLastError());
 
@@ -2276,11 +2458,11 @@ static void test_wndproc(void)
 
     flush_events();
 
-    expect_messages = messages;
+    expect_messages = create_messages;
 
     device_desc.device_window = device_window;
-    device_desc.width = screen_width;
-    device_desc.height = screen_height;
+    device_desc.width = d3d_width;
+    device_desc.height = d3d_height;
     device_desc.flags = CREATE_DEVICE_FULLSCREEN;
     if (!(device = create_device(d3d8, focus_window, &device_desc)))
     {
@@ -2302,18 +2484,118 @@ static void test_wndproc(void)
     SetForegroundWindow(focus_window);
     flush_events();
 
-    filter_messages = focus_window;
-
     proc = GetWindowLongPtrA(device_window, GWLP_WNDPROC);
     ok(proc == (LONG_PTR)test_proc, "Expected wndproc %#lx, got %#lx.\n",
             (LONG_PTR)test_proc, proc);
 
     proc = GetWindowLongPtrA(focus_window, GWLP_WNDPROC);
-    ok(proc != (LONG_PTR)test_proc, "Expected wndproc != %#lx, got %#lx.\n",
-            (LONG_PTR)test_proc, proc);
+    ok(proc != (LONG_PTR)test_proc, "Expected wndproc != %#lx.\n", (LONG_PTR)test_proc);
 
+    /* Change the mode while the device is in use and then drop focus. */
+    devmode.dmFields = DM_PELSWIDTH | DM_PELSHEIGHT;
+    devmode.dmPelsWidth = user32_width;
+    devmode.dmPelsHeight = user32_height;
+    change_ret = ChangeDisplaySettingsW(&devmode, CDS_FULLSCREEN);
+    ok(change_ret == DISP_CHANGE_SUCCESSFUL, "Failed to change display mode, ret %#x, i=%u.\n", change_ret, i);
+
+    /* Wine doesn't (yet) mark the device not reset when the mode is changed, thus the todo_wine.
+     * But sometimes focus-follows-mouse WMs also temporarily drop window focus, which makes
+     * mark the device lost, then not reset, causing the test to succeed for the wrong reason. */
+    hr = IDirect3DDevice8_TestCooperativeLevel(device);
+    if (hr == D3DERR_DEVICENOTRESET)
+        ok(hr == D3DERR_DEVICENOTRESET, "Got unexpected hr %#x.\n", hr);
+    else
+        todo_wine ok(hr == D3DERR_DEVICENOTRESET, "Got unexpected hr %#x.\n", hr);
+
+    expect_messages = focus_loss_messages;
+    /* SetForegroundWindow is a poor replacement for the user pressing alt-tab or
+     * manually changing the focus. It generates the same messages, but the task
+     * bar still shows the previous foreground window as active, and the window has
+     * an inactive titlebar if reactivated with SetForegroundWindow. Reactivating
+     * the device is difficult, see below. */
+    SetForegroundWindow(GetDesktopWindow());
+    ok(!expect_messages->message, "Expected message %#x for window %#x, but didn't receive it.\n",
+            expect_messages->message, expect_messages->window);
+    expect_messages = NULL;
+    tmp = GetFocus();
+    ok(tmp != device_window, "The device window is active.\n");
+    ok(tmp != focus_window, "The focus window is active.\n");
+
+    /* The Present call is necessary to make native realize the device is lost. */
+    hr = IDirect3DDevice8_Present(device, NULL, NULL, NULL, NULL);
+    ok(hr == D3DERR_DEVICELOST, "Got unexpected hr %#x.\n", hr);
+    hr = IDirect3DDevice8_TestCooperativeLevel(device);
+    /* Focus-follows-mouse WMs prematurely reactivate our window. */
+    if (hr == D3DERR_DEVICENOTRESET)
+        todo_wine ok(hr == D3DERR_DEVICELOST, "Got unexpected hr %#x.\n", hr);
+    else
+        ok(hr == D3DERR_DEVICELOST, "Got unexpected hr %#x.\n", hr);
+
+    ret = EnumDisplaySettingsW(NULL, ENUM_CURRENT_SETTINGS, &devmode);
+    ok(ret, "Failed to get display mode.\n");
+    ok(devmode.dmPelsWidth == registry_mode.dmPelsWidth
+            && devmode.dmPelsHeight == registry_mode.dmPelsHeight, "Got unexpect screen size %ux%u.\n",
+            devmode.dmPelsWidth, devmode.dmPelsHeight);
+
+    /* I have to minimize and restore the focus window, otherwise native d3d9 fails
+     * device::reset with D3DERR_DEVICELOST. This does not happen when the window
+     * restore is triggered by the user. */
+    expect_messages = reactivate_messages;
+    ShowWindow(focus_window, SW_MINIMIZE);
+    ShowWindow(focus_window, SW_RESTORE);
+    /* Set focus twice to make KDE and fvwm in focus-follows-mouse mode happy. */
+    SetForegroundWindow(focus_window);
+    flush_events();
+    SetForegroundWindow(focus_window);
+    flush_events(); /* WM_WINDOWPOSCHANGING etc arrive after SetForegroundWindow returns. */
+    ok(!expect_messages->message, "Expected message %#x for window %#x, but didn't receive it, i=%u.\n",
+            expect_messages->message, expect_messages->window, i);
+    expect_messages = NULL;
+
+    hr = IDirect3DDevice8_TestCooperativeLevel(device);
+    ok(hr == D3DERR_DEVICENOTRESET, "Got unexpected hr %#x.\n", hr);
+
+    ret = EnumDisplaySettingsW(NULL, ENUM_CURRENT_SETTINGS, &devmode);
+    ok(ret, "Failed to get display mode.\n");
+    ok(devmode.dmPelsWidth == registry_mode.dmPelsWidth
+            && devmode.dmPelsHeight == registry_mode.dmPelsHeight, "Got unexpect screen size %ux%u.\n",
+            devmode.dmPelsWidth, devmode.dmPelsHeight);
+
+    hr = reset_device(device, &device_desc);
+    ok(SUCCEEDED(hr), "Failed to reset device, hr %#x.\n", hr);
+
+    ShowWindow(device_window, SW_HIDE);
+    flush_events();
+
+    expect_messages = focus_loss_messages_hidden;
+    unexpected_messages = focus_loss_messages_hidden_unexpected;
+    SetForegroundWindow(GetDesktopWindow());
+    ok(!expect_messages->message, "Expected message %#x for window %#x, but didn't receive it.\n",
+            expect_messages->message, expect_messages->window);
+    expect_messages = NULL;
+    unexpected_messages = NULL;
+
+    ret = EnumDisplaySettingsW(NULL, ENUM_CURRENT_SETTINGS, &devmode);
+    ok(ret, "Failed to get display mode.\n");
+    ok(devmode.dmPelsWidth == registry_mode.dmPelsWidth, "Got unexpect width %u.\n", devmode.dmPelsWidth);
+    ok(devmode.dmPelsHeight == registry_mode.dmPelsHeight, "Got unexpect height %u.\n", devmode.dmPelsHeight);
+
+    ShowWindow(focus_window, SW_MINIMIZE);
+    ShowWindow(focus_window, SW_RESTORE);
+    SetForegroundWindow(focus_window);
+    flush_events();
+
+    /* Releasing a device in lost state breaks follow-up tests on native. */
+    hr = reset_device(device, &device_desc);
+    ok(SUCCEEDED(hr), "Failed to reset device, hr %#x.\n", hr);
+
+    filter_messages = focus_window;
     ref = IDirect3DDevice8_Release(device);
     ok(ref == 0, "The device was not properly freed: refcount %u.\n", ref);
+
+    /* Fix up the mode until Wine's device release behavior is fixed. */
+    change_ret = ChangeDisplaySettingsW(NULL, CDS_FULLSCREEN);
+    ok(change_ret == DISP_CHANGE_SUCCESSFUL, "Failed to change display mode, ret %#x.\n", change_ret);
 
     proc = GetWindowLongPtrA(focus_window, GWLP_WNDPROC);
     ok(proc == (LONG_PTR)test_proc, "Expected wndproc %#lx, got %#lx.\n",
@@ -2337,8 +2619,7 @@ static void test_wndproc(void)
     }
 
     proc = SetWindowLongPtrA(focus_window, GWLP_WNDPROC, (LONG_PTR)DefWindowProcA);
-    ok(proc != (LONG_PTR)test_proc, "Expected wndproc != %#lx, got %#lx.\n",
-            (LONG_PTR)test_proc, proc);
+    ok(proc != (LONG_PTR)test_proc, "Expected wndproc != %#lx.\n", (LONG_PTR)test_proc);
 
     ref = IDirect3DDevice8_Release(device);
     ok(ref == 0, "The device was not properly freed: refcount %u.\n", ref);
@@ -2389,9 +2670,11 @@ static void test_wndproc_windowed(void)
     ok(!!thread_params.test_finished, "CreateEvent failed, last error %#x.\n", GetLastError());
 
     focus_window = CreateWindowA("d3d8_test_wndproc_wc", "d3d8_test",
-            WS_MAXIMIZE | WS_VISIBLE | WS_CAPTION, 0, 0, screen_width, screen_height, 0, 0, 0, 0);
+            WS_MAXIMIZE | WS_VISIBLE | WS_CAPTION, 0, 0, registry_mode.dmPelsWidth,
+            registry_mode.dmPelsHeight, 0, 0, 0, 0);
     device_window = CreateWindowA("d3d8_test_wndproc_wc", "d3d8_test",
-            WS_MAXIMIZE | WS_VISIBLE | WS_CAPTION, 0, 0, screen_width, screen_height, 0, 0, 0, 0);
+            WS_MAXIMIZE | WS_VISIBLE | WS_CAPTION, 0, 0, registry_mode.dmPelsWidth,
+            registry_mode.dmPelsHeight, 0, 0, 0, 0);
     thread = CreateThread(NULL, 0, wndproc_thread, &thread_params, 0, &tid);
     ok(!!thread, "Failed to create thread, last error %#x.\n", GetLastError());
 
@@ -2422,8 +2705,8 @@ static void test_wndproc_windowed(void)
     filter_messages = focus_window;
 
     device_desc.device_window = device_window;
-    device_desc.width = 640;
-    device_desc.height = 480;
+    device_desc.width = registry_mode.dmPelsWidth;
+    device_desc.height = registry_mode.dmPelsHeight;
     device_desc.flags = 0;
     if (!(device = create_device(d3d8, focus_window, &device_desc)))
     {
@@ -2447,7 +2730,8 @@ static void test_wndproc_windowed(void)
 
     filter_messages = NULL;
 
-    hr = reset_device(device, device_window, FALSE);
+    device_desc.flags = CREATE_DEVICE_FULLSCREEN;
+    hr = reset_device(device, &device_desc);
     ok(SUCCEEDED(hr), "Failed to reset device, hr %#x.\n", hr);
 
     proc = GetWindowLongPtrA(device_window, GWLP_WNDPROC);
@@ -2455,10 +2739,10 @@ static void test_wndproc_windowed(void)
             (LONG_PTR)test_proc, proc);
 
     proc = GetWindowLongPtrA(focus_window, GWLP_WNDPROC);
-    ok(proc != (LONG_PTR)test_proc, "Expected wndproc %#lx, got %#lx.\n",
-            (LONG_PTR)test_proc, proc);
+    ok(proc != (LONG_PTR)test_proc, "Expected wndproc != %#lx.\n", (LONG_PTR)test_proc);
 
-    hr = reset_device(device, device_window, TRUE);
+    device_desc.flags = 0;
+    hr = reset_device(device, &device_desc);
     ok(SUCCEEDED(hr), "Failed to reset device, hr %#x.\n", hr);
 
     proc = GetWindowLongPtrA(device_window, GWLP_WNDPROC);
@@ -2485,7 +2769,8 @@ static void test_wndproc_windowed(void)
 
     filter_messages = NULL;
 
-    hr = reset_device(device, focus_window, FALSE);
+    device_desc.flags = CREATE_DEVICE_FULLSCREEN;
+    hr = reset_device(device, &device_desc);
     ok(SUCCEEDED(hr), "Failed to reset device, hr %#x.\n", hr);
 
     proc = GetWindowLongPtrA(device_window, GWLP_WNDPROC);
@@ -2493,10 +2778,10 @@ static void test_wndproc_windowed(void)
             (LONG_PTR)test_proc, proc);
 
     proc = GetWindowLongPtrA(focus_window, GWLP_WNDPROC);
-    ok(proc != (LONG_PTR)test_proc, "Expected wndproc %#lx, got %#lx.\n",
-            (LONG_PTR)test_proc, proc);
+    ok(proc != (LONG_PTR)test_proc, "Expected wndproc != %#lx.\n", (LONG_PTR)test_proc);
 
-    hr = reset_device(device, focus_window, TRUE);
+    device_desc.flags = 0;
+    hr = reset_device(device, &device_desc);
     ok(SUCCEEDED(hr), "Failed to reset device, hr %#x.\n", hr);
 
     proc = GetWindowLongPtrA(device_window, GWLP_WNDPROC);
@@ -2521,7 +2806,8 @@ static void test_wndproc_windowed(void)
 
     filter_messages = NULL;
 
-    hr = reset_device(device, device_window, FALSE);
+    device_desc.flags = CREATE_DEVICE_FULLSCREEN;
+    hr = reset_device(device, &device_desc);
     ok(SUCCEEDED(hr), "Failed to reset device, hr %#x.\n", hr);
 
     proc = GetWindowLongPtrA(device_window, GWLP_WNDPROC);
@@ -2529,10 +2815,10 @@ static void test_wndproc_windowed(void)
             (LONG_PTR)test_proc, proc);
 
     proc = GetWindowLongPtrA(focus_window, GWLP_WNDPROC);
-    ok(proc != (LONG_PTR)test_proc, "Expected wndproc %#lx, got %#lx.\n",
-            (LONG_PTR)test_proc, proc);
+    ok(proc != (LONG_PTR)test_proc, "Expected wndproc != %#lx.\n", (LONG_PTR)test_proc);
 
-    hr = reset_device(device, device_window, TRUE);
+    device_desc.flags = 0;
+    hr = reset_device(device, &device_desc);
     ok(SUCCEEDED(hr), "Failed to reset device, hr %#x.\n", hr);
 
     proc = GetWindowLongPtrA(device_window, GWLP_WNDPROC);
@@ -2600,7 +2886,8 @@ static void test_fpu_setup(void)
     HRESULT hr;
     WORD cw;
 
-    window = CreateWindowA("d3d8_test_wc", "d3d8_test", WS_CAPTION, 0, 0, screen_width, screen_height, 0, 0, 0, 0);
+    window = CreateWindowA("d3d8_test_wc", "d3d8_test", WS_CAPTION, 0, 0,
+            registry_mode.dmPelsWidth, registry_mode.dmPelsHeight, 0, 0, 0, 0);
     ok(!!window, "Failed to create a window.\n");
     d3d8 = Direct3DCreate8(D3D_SDK_VERSION);
     ok(!!d3d8, "Failed to create a D3D object.\n");
@@ -2777,11 +3064,12 @@ static void test_window_style(void)
     IDirect3D8 *d3d8;
     HRESULT hr;
     ULONG ref;
+    BOOL ret;
 
     focus_window = CreateWindowA("d3d8_test_wc", "d3d8_test", WS_OVERLAPPEDWINDOW,
-            0, 0, screen_width / 2, screen_height / 2, 0, 0, 0, 0);
+            0, 0, registry_mode.dmPelsWidth / 2, registry_mode.dmPelsHeight / 2, 0, 0, 0, 0);
     device_window = CreateWindowA("d3d8_test_wc", "d3d8_test", WS_OVERLAPPEDWINDOW,
-            0, 0, screen_width / 2, screen_height / 2, 0, 0, 0, 0);
+            0, 0, registry_mode.dmPelsWidth / 2, registry_mode.dmPelsHeight / 2, 0, 0, 0, 0);
     d3d8 = Direct3DCreate8(D3D_SDK_VERSION);
     ok(!!d3d8, "Failed to create a D3D object.\n");
 
@@ -2790,12 +3078,12 @@ static void test_window_style(void)
     focus_style = GetWindowLongA(focus_window, GWL_STYLE);
     focus_exstyle = GetWindowLongA(focus_window, GWL_EXSTYLE);
 
-    SetRect(&fullscreen_rect, 0, 0, screen_width, screen_height);
+    SetRect(&fullscreen_rect, 0, 0, registry_mode.dmPelsWidth, registry_mode.dmPelsHeight);
     GetWindowRect(focus_window, &focus_rect);
 
     device_desc.device_window = device_window;
-    device_desc.width = screen_width;
-    device_desc.height = screen_height;
+    device_desc.width = registry_mode.dmPelsWidth;
+    device_desc.height = registry_mode.dmPelsHeight;
     device_desc.flags = CREATE_DEVICE_FULLSCREEN;
     if (!(device = create_device(d3d8, focus_window, &device_desc)))
     {
@@ -2830,7 +3118,8 @@ static void test_window_style(void)
             focus_rect.left, focus_rect.top, focus_rect.right, focus_rect.bottom,
             r.left, r.top, r.right, r.bottom);
 
-    hr = reset_device(device, device_window, TRUE);
+    device_desc.flags = 0;
+    hr = reset_device(device, &device_desc);
     ok(SUCCEEDED(hr), "Failed to reset device, hr %#x.\n", hr);
 
     style = GetWindowLongA(device_window, GWL_STYLE);
@@ -2849,6 +3138,36 @@ static void test_window_style(void)
     ok(style == focus_exstyle, "Expected focus window extended style %#x, got %#x.\n",
             focus_exstyle, style);
 
+    device_desc.flags = CREATE_DEVICE_FULLSCREEN;
+    hr = reset_device(device, &device_desc);
+    ok(SUCCEEDED(hr), "Failed to reset device, hr %#x.\n", hr);
+    ret = SetForegroundWindow(GetDesktopWindow());
+    ok(ret, "Failed to set foreground window.\n");
+
+    style = GetWindowLongA(device_window, GWL_STYLE);
+    expected_style = device_style | WS_MINIMIZE | WS_VISIBLE;
+    todo_wine ok(style == expected_style, "Expected device window style %#x, got %#x.\n",
+            expected_style, style);
+    style = GetWindowLongA(device_window, GWL_EXSTYLE);
+    expected_style = device_exstyle | WS_EX_TOPMOST;
+    todo_wine ok(style == expected_style, "Expected device window extended style %#x, got %#x.\n",
+            expected_style, style);
+
+    style = GetWindowLongA(focus_window, GWL_STYLE);
+    ok(style == focus_style, "Expected focus window style %#x, got %#x.\n",
+            focus_style, style);
+    style = GetWindowLongA(focus_window, GWL_EXSTYLE);
+    ok(style == focus_exstyle, "Expected focus window extended style %#x, got %#x.\n",
+            focus_exstyle, style);
+
+    /* Follow-up tests fail on native if the device is destroyed while lost. */
+    ShowWindow(focus_window, SW_MINIMIZE);
+    ShowWindow(focus_window, SW_RESTORE);
+    ret = SetForegroundWindow(focus_window);
+    ok(ret, "Failed to set foreground window.\n");
+    flush_events();
+    hr = reset_device(device, &device_desc);
+    ok(SUCCEEDED(hr), "Failed to reset device, hr %#x.\n", hr);
 
     ref = IDirect3DDevice8_Release(device);
     ok(ref == 0, "The device was not properly freed: refcount %u.\n", ref);
@@ -2977,56 +3296,119 @@ static void test_unsupported_shaders(void)
 
 static void test_mode_change(void)
 {
-    RECT fullscreen_rect, focus_rect, r;
+    RECT d3d_rect, focus_rect, r;
     struct device_desc device_desc;
     IDirect3DSurface8 *backbuffer;
     IDirect3DDevice8 *device;
     D3DSURFACE_DESC desc;
     IDirect3D8 *d3d8;
     DEVMODEW devmode;
-    UINT refcount;
+    ULONG refcount;
+    UINT adapter_mode_count, i;
     HRESULT hr;
-    DWORD ret;
+    BOOL ret;
+    LONG change_ret;
+    D3DDISPLAYMODE d3ddm;
+    DWORD d3d_width = 0, d3d_height = 0, user32_width = 0, user32_height = 0;
 
-    focus_window = CreateWindowA("d3d8_test_wc", "d3d8_test", WS_OVERLAPPEDWINDOW,
-            0, 0, screen_width / 2, screen_height / 2, 0, 0, 0, 0);
-    device_window = CreateWindowA("d3d8_test_wc", "d3d8_test", WS_OVERLAPPEDWINDOW,
-            0, 0, screen_width / 2, screen_height / 2, 0, 0, 0, 0);
     d3d8 = Direct3DCreate8(D3D_SDK_VERSION);
     ok(!!d3d8, "Failed to create a D3D object.\n");
 
-    SetRect(&fullscreen_rect, 0, 0, screen_width, screen_height);
-    GetWindowRect(focus_window, &focus_rect);
-
-    device_desc.device_window = device_window;
-    device_desc.width = screen_width;
-    device_desc.height = screen_height;
-    device_desc.flags = CREATE_DEVICE_FULLSCREEN;
-    if (!(device = create_device(d3d8, focus_window, &device_desc)))
+    adapter_mode_count = IDirect3D8_GetAdapterModeCount(d3d8, D3DADAPTER_DEFAULT);
+    for (i = 0; i < adapter_mode_count; ++i)
     {
-        skip("Failed to create a D3D device, skipping tests.\n");
-        goto done;
+        hr = IDirect3D8_EnumAdapterModes(d3d8, D3DADAPTER_DEFAULT, i, &d3ddm);
+        ok(SUCCEEDED(hr), "Failed to enumerate display mode, hr %#x.\n", hr);
+
+        if (d3ddm.Format != D3DFMT_X8R8G8B8)
+            continue;
+        if (d3ddm.Width == registry_mode.dmPelsWidth && d3ddm.Height == registry_mode.dmPelsHeight)
+            continue;
+        /* The r200 driver on Windows XP enumerates modes like 320x200 and 320x240 but
+         * refuses to create a device at these sizes. */
+        if (d3ddm.Width < 640 || d3ddm.Height < 480)
+            continue;
+
+        if (!user32_width)
+        {
+            user32_width = d3ddm.Width;
+            user32_height = d3ddm.Height;
+            continue;
+        }
+
+        /* Make sure the d3d mode is smaller in width or height and at most
+         * equal in the other dimension than the mode passed to
+         * ChangeDisplaySettings. Otherwise Windows shrinks the window to
+         * the ChangeDisplaySettings parameters + 12. */
+        if (d3ddm.Width == user32_width && d3ddm.Height == user32_height)
+            continue;
+        if (d3ddm.Width <= user32_width && d3ddm.Height <= user32_height)
+        {
+            d3d_width = d3ddm.Width;
+            d3d_height = d3ddm.Height;
+            break;
+        }
+        if (user32_width <= d3ddm.Width && user32_height <= d3ddm.Height)
+        {
+            d3d_width = user32_width;
+            d3d_height = user32_height;
+            user32_width = d3ddm.Width;
+            user32_height = d3ddm.Height;
+            break;
+        }
+    }
+
+    if (!d3d_width)
+    {
+        skip("Could not find adequate modes, skipping mode tests.\n");
+        IDirect3D8_Release(d3d8);
+        return;
     }
 
     memset(&devmode, 0, sizeof(devmode));
     devmode.dmSize = sizeof(devmode);
     devmode.dmFields = DM_PELSWIDTH | DM_PELSHEIGHT;
-    devmode.dmPelsWidth = 640;
-    devmode.dmPelsHeight = 480;
+    devmode.dmPelsWidth = user32_width;
+    devmode.dmPelsHeight = user32_height;
+    change_ret = ChangeDisplaySettingsW(&devmode, CDS_FULLSCREEN);
+    ok(change_ret == DISP_CHANGE_SUCCESSFUL, "Failed to change display mode, ret %#x.\n", change_ret);
 
-    ret = ChangeDisplaySettingsW(&devmode, CDS_FULLSCREEN);
-    ok(ret == DISP_CHANGE_SUCCESSFUL, "Failed to change display mode, ret %#x.\n", ret);
+    /* Make the windows visible, otherwise device::release does not restore the mode if
+     * the application is not in foreground like on the testbot. */
+    focus_window = CreateWindowA("d3d8_test_wc", "d3d8_test", WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+            0, 0, user32_width / 2, user32_height / 2, 0, 0, 0, 0);
+    device_window = CreateWindowA("d3d8_test_wc", "d3d8_test", WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+            0, 0, user32_width / 2, user32_height / 2, 0, 0, 0, 0);
 
-    memset(&devmode, 0, sizeof(devmode));
-    devmode.dmSize = sizeof(devmode);
+    SetRect(&d3d_rect, 0, 0, d3d_width, d3d_height);
+    GetWindowRect(focus_window, &focus_rect);
+
+    device_desc.device_window = device_window;
+    device_desc.width = d3d_width;
+    device_desc.height = d3d_height;
+    device_desc.flags = CREATE_DEVICE_FULLSCREEN;
+    if (!(device = create_device(d3d8, focus_window, &device_desc)))
+    {
+        skip("Failed to create a D3D device, skipping tests.\n");
+        change_ret = ChangeDisplaySettingsW(NULL, CDS_FULLSCREEN);
+        ok(change_ret == DISP_CHANGE_SUCCESSFUL, "Failed to change display mode, ret %#x.\n", change_ret);
+        goto done;
+    }
+
+    devmode.dmPelsWidth = user32_width;
+    devmode.dmPelsHeight = user32_height;
+    change_ret = ChangeDisplaySettingsW(&devmode, CDS_FULLSCREEN);
+    ok(change_ret == DISP_CHANGE_SUCCESSFUL, "Failed to change display mode, ret %#x.\n", change_ret);
+
     ret = EnumDisplaySettingsW(NULL, ENUM_CURRENT_SETTINGS, &devmode);
     ok(ret, "Failed to get display mode.\n");
-    ok(devmode.dmPelsWidth == 640, "Got unexpect width %u.\n", devmode.dmPelsWidth);
-    ok(devmode.dmPelsHeight == 480, "Got unexpect height %u.\n", devmode.dmPelsHeight);
+    ok(devmode.dmPelsWidth == user32_width && devmode.dmPelsHeight == user32_height,
+            "Expected resolution %ux%u, got %ux%u.\n",
+            user32_width, user32_height, devmode.dmPelsWidth, devmode.dmPelsHeight);
 
     GetWindowRect(device_window, &r);
-    ok(EqualRect(&r, &fullscreen_rect), "Expected {%d, %d, %d, %d}, got {%d, %d, %d, %d}.\n",
-            fullscreen_rect.left, fullscreen_rect.top, fullscreen_rect.right, fullscreen_rect.bottom,
+    ok(EqualRect(&r, &d3d_rect), "Expected {%d, %d, %d, %d}, got {%d, %d, %d, %d}.\n",
+            d3d_rect.left, d3d_rect.top, d3d_rect.right, d3d_rect.bottom,
             r.left, r.top, r.right, r.bottom);
     GetWindowRect(focus_window, &r);
     ok(EqualRect(&r, &focus_rect), "Expected {%d, %d, %d, %d}, got {%d, %d, %d, %d}.\n",
@@ -3037,31 +3419,52 @@ static void test_mode_change(void)
     ok(SUCCEEDED(hr), "Failed to get backbuffer, hr %#x.\n", hr);
     hr = IDirect3DSurface8_GetDesc(backbuffer, &desc);
     ok(SUCCEEDED(hr), "Failed to get backbuffer desc, hr %#x.\n", hr);
-    ok(desc.Width == screen_width, "Got unexpected backbuffer width %u.\n", desc.Width);
-    ok(desc.Height == screen_height, "Got unexpected backbuffer height %u.\n", desc.Height);
+    ok(desc.Width == d3d_width, "Got unexpected backbuffer width %u, expected %u.\n",
+            desc.Width, d3d_width);
+    ok(desc.Height == d3d_height, "Got unexpected backbuffer height %u, expected %u.\n",
+            desc.Height, d3d_height);
     IDirect3DSurface8_Release(backbuffer);
 
     refcount = IDirect3DDevice8_Release(device);
     ok(!refcount, "Device has %u references left.\n", refcount);
 
-    memset(&devmode, 0, sizeof(devmode));
-    devmode.dmSize = sizeof(devmode);
     ret = EnumDisplaySettingsW(NULL, ENUM_CURRENT_SETTINGS, &devmode);
     ok(ret, "Failed to get display mode.\n");
-    ok(devmode.dmPelsWidth == screen_width, "Got unexpect width %u.\n", devmode.dmPelsWidth);
-    ok(devmode.dmPelsHeight == screen_height, "Got unexpect height %u.\n", devmode.dmPelsHeight);
+    todo_wine ok(devmode.dmPelsWidth == registry_mode.dmPelsWidth
+            && devmode.dmPelsHeight == registry_mode.dmPelsHeight,
+            "Expected resolution %ux%u, got %ux%u.\n",
+            registry_mode.dmPelsWidth, registry_mode.dmPelsHeight, devmode.dmPelsWidth, devmode.dmPelsHeight);
+
+    change_ret = ChangeDisplaySettingsW(NULL, CDS_FULLSCREEN);
+    ok(change_ret == DISP_CHANGE_SUCCESSFUL, "Failed to change display mode, ret %#x.\n", change_ret);
+
+    /* The mode restore also happens when the device was created at the original screen size. */
+
+    device_desc.device_window = device_window;
+    device_desc.width = registry_mode.dmPelsWidth;
+    device_desc.height = registry_mode.dmPelsHeight;
+    device_desc.flags = CREATE_DEVICE_FULLSCREEN;
+    ok(!!(device = create_device(d3d8, focus_window, &device_desc)), "Failed to create a D3D device.\n");
+
+    devmode.dmPelsWidth = user32_width;
+    devmode.dmPelsHeight = user32_height;
+    change_ret = ChangeDisplaySettingsW(&devmode, CDS_FULLSCREEN);
+    ok(change_ret == DISP_CHANGE_SUCCESSFUL, "Failed to change display mode, ret %#x.\n", change_ret);
+
+    refcount = IDirect3DDevice8_Release(device);
+    ok(!refcount, "Device has %u references left.\n", refcount);
+
+    ret = EnumDisplaySettingsW(NULL, ENUM_CURRENT_SETTINGS, &devmode);
+    ok(ret, "Failed to get display mode.\n");
+    ok(devmode.dmPelsWidth == registry_mode.dmPelsWidth
+            && devmode.dmPelsHeight == registry_mode.dmPelsHeight,
+            "Expected resolution %ux%u, got %ux%u.\n",
+            registry_mode.dmPelsWidth, registry_mode.dmPelsHeight, devmode.dmPelsWidth, devmode.dmPelsHeight);
 
 done:
     DestroyWindow(device_window);
     DestroyWindow(focus_window);
     IDirect3D8_Release(d3d8);
-
-    memset(&devmode, 0, sizeof(devmode));
-    devmode.dmSize = sizeof(devmode);
-    ret = EnumDisplaySettingsW(NULL, ENUM_CURRENT_SETTINGS, &devmode);
-    ok(ret, "Failed to get display mode.\n");
-    ok(devmode.dmPelsWidth == screen_width, "Got unexpect width %u.\n", devmode.dmPelsWidth);
-    ok(devmode.dmPelsHeight == screen_height, "Got unexpect height %u.\n", devmode.dmPelsHeight);
 }
 
 static void test_device_window_reset(void)
@@ -3080,13 +3483,13 @@ static void test_device_window_reset(void)
     ok(RegisterClassA(&wc), "Failed to register window class.\n");
 
     focus_window = CreateWindowA("d3d8_test_wndproc_wc", "d3d8_test", WS_OVERLAPPEDWINDOW,
-            0, 0, screen_width / 2, screen_height / 2, 0, 0, 0, 0);
+            0, 0, registry_mode.dmPelsWidth / 2, registry_mode.dmPelsHeight / 2, 0, 0, 0, 0);
     device_window = CreateWindowA("d3d8_test_wndproc_wc", "d3d8_test", WS_OVERLAPPEDWINDOW,
-            0, 0, screen_width / 2, screen_height / 2, 0, 0, 0, 0);
+            0, 0, registry_mode.dmPelsWidth / 2, registry_mode.dmPelsHeight / 2, 0, 0, 0, 0);
     d3d8 = Direct3DCreate8(D3D_SDK_VERSION);
     ok(!!d3d8, "Failed to create a D3D object.\n");
 
-    SetRect(&fullscreen_rect, 0, 0, screen_width, screen_height);
+    SetRect(&fullscreen_rect, 0, 0, registry_mode.dmPelsWidth, registry_mode.dmPelsHeight);
     GetWindowRect(device_window, &device_rect);
 
     proc = GetWindowLongPtrA(device_window, GWLP_WNDPROC);
@@ -3097,8 +3500,8 @@ static void test_device_window_reset(void)
             (LONG_PTR)test_proc, proc);
 
     device_desc.device_window = NULL;
-    device_desc.width = screen_width;
-    device_desc.height = screen_height;
+    device_desc.width = registry_mode.dmPelsWidth;
+    device_desc.height = registry_mode.dmPelsHeight;
     device_desc.flags = CREATE_DEVICE_FULLSCREEN;
     if (!(device = create_device(d3d8, focus_window, &device_desc)))
     {
@@ -3119,10 +3522,10 @@ static void test_device_window_reset(void)
     ok(proc == (LONG_PTR)test_proc, "Expected wndproc %#lx, got %#lx.\n",
             (LONG_PTR)test_proc, proc);
     proc = GetWindowLongPtrA(focus_window, GWLP_WNDPROC);
-    ok(proc != (LONG_PTR)test_proc, "Expected wndproc %#lx, got %#lx.\n",
-            (LONG_PTR)test_proc, proc);
+    ok(proc != (LONG_PTR)test_proc, "Expected wndproc != %#lx.\n", (LONG_PTR)test_proc);
 
-    hr = reset_device(device, device_window, FALSE);
+    device_desc.device_window = device_window;
+    hr = reset_device(device, &device_desc);
     ok(SUCCEEDED(hr), "Failed to reset device.\n");
 
     GetWindowRect(focus_window, &r);
@@ -3138,8 +3541,7 @@ static void test_device_window_reset(void)
     ok(proc == (LONG_PTR)test_proc, "Expected wndproc %#lx, got %#lx.\n",
             (LONG_PTR)test_proc, proc);
     proc = GetWindowLongPtrA(focus_window, GWLP_WNDPROC);
-    ok(proc != (LONG_PTR)test_proc, "Expected wndproc %#lx, got %#lx.\n",
-            (LONG_PTR)test_proc, proc);
+    ok(proc != (LONG_PTR)test_proc, "Expected wndproc != %#lx.\n", (LONG_PTR)test_proc);
 
     ref = IDirect3DDevice8_Release(device);
     ok(ref == 0, "The device was not properly freed: refcount %u.\n", ref);
@@ -3258,7 +3660,7 @@ static void test_reset_resources(void)
     IDirect3DSurface8_Release(rt);
     IDirect3DSurface8_Release(surface);
 
-    hr = reset_device(device, device_window, TRUE);
+    hr = reset_device(device, NULL);
     ok(SUCCEEDED(hr), "Failed to reset device.\n");
 
     hr = IDirect3DDevice8_GetBackBuffer(device, 0, D3DBACKBUFFER_TYPE_MONO, &rt);
@@ -4367,9 +4769,10 @@ static void test_surface_blocks(void)
         {D3DFMT_DXT3,                 "D3DFMT_DXT3", 4, 4, FALSE, TRUE,  TRUE },
         {D3DFMT_DXT4,                 "D3DFMT_DXT4", 4, 4, FALSE, TRUE,  TRUE },
         {D3DFMT_DXT5,                 "D3DFMT_DXT5", 4, 4, FALSE, TRUE,  TRUE },
-        /* ATI2N has 2x2 blocks on all AMD cards and Geforce 7 cards,
+        /* ATI1N and ATI2N have 2x2 blocks on all AMD cards and Geforce 7 cards,
          * which doesn't match the format spec. On newer Nvidia cards
-         * it has the correct 4x4 block size */
+         * they have the correct 4x4 block size */
+        {MAKEFOURCC('A','T','I','1'), "ATI1N",       4, 4, TRUE,  FALSE, FALSE},
         {MAKEFOURCC('A','T','I','2'), "ATI2N",       4, 4, TRUE,  FALSE, FALSE},
         /* Windows drivers generally enforce block-aligned locks for
          * YUY2 and UYVY. The notable exception is the AMD r500 driver
@@ -5254,25 +5657,28 @@ static void test_volume_blocks(void)
         unsigned int block_height;
         unsigned int block_depth;
         unsigned int block_size;
-        BOOL broken;
+        unsigned int broken;
         BOOL create_size_checked, core_fmt;
     }
     formats[] =
     {
         /* Scratch volumes enforce DXTn block locks, unlike their surface counterparts.
          * ATI2N and YUV blocks are not enforced on any tested card (r200, gtx 460). */
-        {D3DFMT_DXT1,                 "D3DFMT_DXT1", 4, 4, 1, 8,  FALSE, TRUE,  TRUE },
-        {D3DFMT_DXT2,                 "D3DFMT_DXT2", 4, 4, 1, 16, FALSE, TRUE,  TRUE },
-        {D3DFMT_DXT3,                 "D3DFMT_DXT3", 4, 4, 1, 16, FALSE, TRUE,  TRUE },
-        {D3DFMT_DXT4,                 "D3DFMT_DXT4", 4, 4, 1, 16, FALSE, TRUE,  TRUE },
-        {D3DFMT_DXT5,                 "D3DFMT_DXT5", 4, 4, 1, 16, FALSE, TRUE,  TRUE },
-        {D3DFMT_DXT5,                 "D3DFMT_DXT5", 4, 4, 1, 16, FALSE, TRUE,  TRUE },
+        {D3DFMT_DXT1,                 "D3DFMT_DXT1", 4, 4, 1, 8,  0, TRUE,  TRUE },
+        {D3DFMT_DXT2,                 "D3DFMT_DXT2", 4, 4, 1, 16, 0, TRUE,  TRUE },
+        {D3DFMT_DXT3,                 "D3DFMT_DXT3", 4, 4, 1, 16, 0, TRUE,  TRUE },
+        {D3DFMT_DXT4,                 "D3DFMT_DXT4", 4, 4, 1, 16, 0, TRUE,  TRUE },
+        {D3DFMT_DXT5,                 "D3DFMT_DXT5", 4, 4, 1, 16, 0, TRUE,  TRUE },
+        {D3DFMT_DXT5,                 "D3DFMT_DXT5", 4, 4, 1, 16, 0, TRUE,  TRUE },
         /* ATI2N has 2x2 blocks on all AMD cards and Geforce 7 cards,
          * which doesn't match the format spec. On newer Nvidia cards
-         * it has the correct 4x4 block size */
-        {MAKEFOURCC('A','T','I','2'), "ATI2N",       4, 4, 1, 16, TRUE,  FALSE, FALSE},
-        {D3DFMT_YUY2,                 "D3DFMT_YUY2", 2, 1, 1, 4,  TRUE,  FALSE, TRUE },
-        {D3DFMT_UYVY,                 "D3DFMT_UYVY", 2, 1, 1, 4,  TRUE,  FALSE, TRUE },
+         * it has the correct 4x4 block size.
+         * ATI1N volume textures are only supported by AMD GPUs right
+         * now and locking offsets seem just wrong. */
+        {MAKEFOURCC('A','T','I','1'), "ATI1N",       4, 4, 1, 8,  2, FALSE, FALSE},
+        {MAKEFOURCC('A','T','I','2'), "ATI2N",       4, 4, 1, 16, 1, FALSE, FALSE},
+        {D3DFMT_YUY2,                 "D3DFMT_YUY2", 2, 1, 1, 4,  1, FALSE, TRUE },
+        {D3DFMT_UYVY,                 "D3DFMT_UYVY", 2, 1, 1, 4,  1, FALSE, TRUE },
     };
     static const struct
     {
@@ -5420,9 +5826,13 @@ static void test_volume_blocks(void)
             ok(SUCCEEDED(hr), "Failed to unlock volume texture, hr %#x.\n", hr);
 
             base = locked_box.pBits;
-            if (formats[i].broken)
+            if (formats[i].broken == 1)
             {
                 expected_row_pitch = bytes_per_pixel * 24;
+            }
+            else if (formats[i].broken == 2)
+            {
+                expected_row_pitch = 24;
             }
             else
             {
@@ -5458,11 +5868,17 @@ static void test_volume_blocks(void)
             ok(SUCCEEDED(hr), "Failed to lock volume texture, hr %#x, j %u.\n", hr, j);
 
             offset = (BYTE *)locked_box.pBits - base;
-            if (formats[i].broken)
+            if (formats[i].broken == 1)
             {
                 expected_offset = box.Front * expected_slice_pitch
                         + box.Top * expected_row_pitch
                         + box.Left * bytes_per_pixel;
+            }
+            else if (formats[i].broken == 2)
+            {
+                expected_offset = box.Front * expected_slice_pitch
+                        + box.Top * expected_row_pitch
+                        + box.Left;
             }
             else
             {
@@ -6374,8 +6790,8 @@ static void test_lost_device(void)
     d3d = Direct3DCreate8(D3D_SDK_VERSION);
     ok(!!d3d, "Failed to create a D3D object.\n");
     device_desc.device_window = window;
-    device_desc.width = screen_width;
-    device_desc.height = screen_height;
+    device_desc.width = registry_mode.dmPelsWidth;
+    device_desc.height = registry_mode.dmPelsHeight;
     device_desc.flags = CREATE_DEVICE_FULLSCREEN;
     if (!(device = create_device(d3d, window, &device_desc)))
     {
@@ -6396,9 +6812,9 @@ static void test_lost_device(void)
 
     ret = SetForegroundWindow(GetDesktopWindow());
     ok(ret, "Failed to set foreground window.\n");
-    hr = IDirect3DDevice8_TestCooperativeLevel(device);
-    ok(hr == D3DERR_DEVICELOST, "Got unexpected hr %#x.\n", hr);
     hr = IDirect3DDevice8_Present(device, NULL, NULL, NULL, NULL);
+    ok(hr == D3DERR_DEVICELOST, "Got unexpected hr %#x.\n", hr);
+    hr = IDirect3DDevice8_TestCooperativeLevel(device);
     ok(hr == D3DERR_DEVICELOST, "Got unexpected hr %#x.\n", hr);
 
     ret = ShowWindow(window, SW_RESTORE);
@@ -6410,14 +6826,15 @@ static void test_lost_device(void)
     hr = IDirect3DDevice8_Present(device, NULL, NULL, NULL, NULL);
     ok(hr == D3DERR_DEVICELOST, "Got unexpected hr %#x.\n", hr);
 
-    hr = reset_device(device, window, FALSE);
+    hr = reset_device(device, &device_desc);
     ok(hr == D3D_OK, "Got unexpected hr %#x.\n", hr);
     hr = IDirect3DDevice8_TestCooperativeLevel(device);
     ok(hr == D3D_OK, "Got unexpected hr %#x.\n", hr);
     hr = IDirect3DDevice8_Present(device, NULL, NULL, NULL, NULL);
     ok(hr == D3D_OK, "Got unexpected hr %#x.\n", hr);
 
-    hr = reset_device(device, window, TRUE);
+    device_desc.flags = 0;
+    hr = reset_device(device, &device_desc);
     ok(hr == D3D_OK, "Got unexpected hr %#x.\n", hr);
     hr = IDirect3DDevice8_TestCooperativeLevel(device);
     ok(hr == D3D_OK, "Got unexpected hr %#x.\n", hr);
@@ -6438,7 +6855,8 @@ static void test_lost_device(void)
     hr = IDirect3DDevice8_Present(device, NULL, NULL, NULL, NULL);
     ok(hr == D3D_OK, "Got unexpected hr %#x.\n", hr);
 
-    hr = reset_device(device, window, FALSE);
+    device_desc.flags = CREATE_DEVICE_FULLSCREEN;
+    hr = reset_device(device, &device_desc);
     ok(hr == D3D_OK, "Got unexpected hr %#x.\n", hr);
     hr = IDirect3DDevice8_TestCooperativeLevel(device);
     todo_wine ok(hr == D3DERR_DEVICELOST, "Got unexpected hr %#x.\n", hr);
@@ -6546,10 +6964,23 @@ START_TEST(device)
     HMODULE d3d8_handle = LoadLibraryA( "d3d8.dll" );
     WNDCLASSA wc = {0};
     IDirect3D8 *d3d8;
+    DEVMODEW current_mode;
 
     if (!d3d8_handle)
     {
         skip("Could not load d3d8.dll\n");
+        return;
+    }
+
+    memset(&current_mode, 0, sizeof(current_mode));
+    current_mode.dmSize = sizeof(current_mode);
+    ok(EnumDisplaySettingsW(NULL, ENUM_CURRENT_SETTINGS, &current_mode), "Failed to get display mode.\n");
+    registry_mode.dmSize = sizeof(registry_mode);
+    ok(EnumDisplaySettingsW(NULL, ENUM_REGISTRY_SETTINGS, &registry_mode), "Failed to get display mode.\n");
+    if (current_mode.dmPelsWidth != registry_mode.dmPelsWidth
+            || current_mode.dmPelsHeight != registry_mode.dmPelsHeight)
+    {
+        skip("Current mode does not match registry mode, skipping test.\n");
         return;
     }
 
@@ -6566,9 +6997,6 @@ START_TEST(device)
         return;
     }
     IDirect3D8_Release(d3d8);
-
-    screen_width = GetSystemMetrics(SM_CXSCREEN);
-    screen_height = GetSystemMetrics(SM_CYSCREEN);
 
     test_fpu_setup();
     test_display_formats();
