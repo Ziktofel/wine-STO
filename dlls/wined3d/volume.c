@@ -29,14 +29,15 @@ WINE_DECLARE_DEBUG_CHANNEL(d3d_perf);
 
 /* Context activation is done by the caller. */
 void wined3d_volume_upload_data(struct wined3d_volume *volume, const struct wined3d_context *context,
-        const struct wined3d_bo_address *data)
+        const struct wined3d_const_bo_address *data)
 {
     const struct wined3d_gl_info *gl_info = context->gl_info;
     const struct wined3d_format *format = volume->resource.format;
     UINT width = volume->resource.width;
     UINT height = volume->resource.height;
     UINT depth = volume->resource.depth;
-    BYTE *mem = data->addr;
+    const void *mem = data->addr;
+    void *converted_mem = NULL;
 
     TRACE("volume %p, context %p, level %u, format %s (%#x).\n",
             volume, context, volume->texture_level, debug_d3dformat(format->id),
@@ -59,9 +60,10 @@ void wined3d_volume_upload_data(struct wined3d_volume *volume, const struct wine
 
         wined3d_resource_get_pitch(&volume->resource, &src_row_pitch, &src_slice_pitch);
 
-        mem = HeapAlloc(GetProcessHeap(), 0, dst_slice_pitch * depth);
-        format->convert(data->addr, mem, src_row_pitch, src_slice_pitch,
+        converted_mem = HeapAlloc(GetProcessHeap(), 0, dst_slice_pitch * depth);
+        format->convert(data->addr, converted_mem, src_row_pitch, src_slice_pitch,
                 dst_row_pitch, dst_slice_pitch, width, height, depth);
+        mem = converted_mem;
     }
 
     if (data->buffer_object)
@@ -81,8 +83,7 @@ void wined3d_volume_upload_data(struct wined3d_volume *volume, const struct wine
         checkGLcall("glBindBufferARB");
     }
 
-    if (mem != data->addr)
-        HeapFree(GetProcessHeap(), 0, mem);
+    HeapFree(GetProcessHeap(), 0, converted_mem);
 }
 
 /* Context activation is done by the caller. */
@@ -145,7 +146,7 @@ static void wined3d_volume_srgb_transfer(struct wined3d_volume *volume,
     wined3d_texture_bind_and_dirtify(volume->container, context, !dest_is_srgb);
     wined3d_volume_download_data(volume, context, &data);
     wined3d_texture_bind_and_dirtify(volume->container, context, dest_is_srgb);
-    wined3d_volume_upload_data(volume, context, &data);
+    wined3d_volume_upload_data(volume, context, wined3d_const_bo_address(&data));
 
     HeapFree(GetProcessHeap(), 0, data.addr);
 }
@@ -198,12 +199,12 @@ static void wined3d_volume_load_location(struct wined3d_resource *resource,
             }
             else if (volume->resource.locations & WINED3D_LOCATION_SYSMEM)
             {
-                struct wined3d_bo_address data = {0, volume->resource.heap_memory};
+                struct wined3d_const_bo_address data = {0, volume->resource.heap_memory};
                 wined3d_volume_upload_data(volume, context, &data);
             }
             else if (volume->resource.locations & WINED3D_LOCATION_BUFFER)
             {
-                struct wined3d_bo_address data = {volume->resource.buffer->name, NULL};
+                struct ined3d_const_bo_address data = {volume->resource.buffer->name, NULL};
                 wined3d_volume_upload_data(volume, context, &data);
             }
             else if (volume->resource.locations & WINED3D_LOCATION_TEXTURE_RGB)

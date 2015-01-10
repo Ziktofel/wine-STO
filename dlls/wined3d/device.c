@@ -575,7 +575,7 @@ static void device_load_logo(struct wined3d_device *device, const char *filename
     desc.depth = 1;
     desc.size = 0;
     if (FAILED(hr = wined3d_texture_create(device, &desc, 1, WINED3D_SURFACE_MAPPABLE,
-            NULL, &wined3d_null_parent_ops, &device->logo_texture)))
+            NULL, NULL, &wined3d_null_parent_ops, &device->logo_texture)))
     {
         ERR("Wine logo requested, but failed to create texture, hr %#x.\n", hr);
         goto out;
@@ -3370,8 +3370,8 @@ void CDECL wined3d_device_draw_indexed_primitive_instanced(struct wined3d_device
 static HRESULT device_update_volume(struct wined3d_context *context,
         struct wined3d_volume *src_volume, struct wined3d_volume *dst_volume)
 {
+    struct wined3d_const_bo_address data;
     HRESULT hr;
-    struct wined3d_bo_address data;
 
     TRACE("src_volume %p, dst_volume %p.\n",
             src_volume, dst_volume);
@@ -3953,6 +3953,8 @@ void CDECL wined3d_device_set_depth_stencil_view(struct wined3d_device *device, 
         wined3d_rendertarget_view_decref(prev);
 }
 
+    struct wined3d_sub_resource_data data;
+    data.slice_pitch = map_desc.slice_pitch;
 HRESULT CDECL wined3d_device_set_cursor_properties(struct wined3d_device *device,
         UINT x_hotspot, UINT y_hotspot, struct wined3d_surface *cursor_image)
 {
